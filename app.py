@@ -9,7 +9,7 @@ import anthropic
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "temporary-insecure-key-please-set-real-one")
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 _raw_client_config = os.environ.get("GOOGLE_CLIENT_SECRET_JSON")
 CLIENT_CONFIG = json.loads(_raw_client_config) if _raw_client_config else None
@@ -103,33 +103,63 @@ def oauth2callback():
     return "Gmail connected! You can close this page. The bot will now run automatically every Friday."
 
 
+LABEL_NAME = "ScheduleBotProcessed"
+
+
+def get_or_create_label(service):
+    labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    for lbl in labels:
+        if lbl["name"] == LABEL_NAME:
+            return lbl["id"]
+    new_label = service.users().labels().create(
+        userId="me", body={"name": LABEL_NAME, "labelListVisibility": "labelHide", "messageListVisibility": "hide"}
+    ).execute()
+    return new_label["id"]
+
+
 def find_latest_schedule_pdf():
+    """Search Gmail for the newest UNPROCESSED matching email and return the PDF bytes.
+    Returns (pdf_bytes, message_id) or (None, None) if nothing new found."""
     from googleapiclient.discovery import build
 
     creds = get_gmail_credentials()
     service = build("gmail", "v1", credentials=creds)
+    get_or_create_label(service)
 
-    query = f'from:{SENDER_EMAIL} has:attachment newer_than:7d'
+    query = f'from:{SENDER_EMAIL} has:attachment newer_than:7d -label:{LABEL_NAME}'
     results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
     messages = results.get("messages", [])
 
     if not messages:
-        query = f'subject:"{BACKUP_SUBJECT}" has:attachment newer_than:7d'
+        query = f'subject:"{BACKUP_SUBJECT}" has:attachment newer_than:7d -label:{LABEL_NAME}'
         results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
         messages = results.get("messages", [])
 
     if not messages:
-        return None
+        return None, None
 
-    msg = service.users().messages().get(userId="me", id=messages[0]["id"]).execute()
+    msg_id = messages[0]["id"]
+    msg = service.users().messages().get(userId="me", id=msg_id).execute()
     for part in msg["payload"].get("parts", []):
         if part["filename"].lower().endswith(".pdf"):
             att_id = part["body"]["attachmentId"]
             att = service.users().messages().attachments().get(
-                userId="me", messageId=msg["id"], id=att_id
+                userId="me", messageId=msg_id, id=att_id
             ).execute()
-            return base64.urlsafe_b64decode(att["data"])
-    return None
+            pdf_bytes = base64.urlsafe_b64decode(att["data"])
+            return pdf_bytes, msg_id
+    return None, None
+
+
+def mark_as_processed(message_id):
+    from googleapiclient.discovery import build
+
+    creds = get_gmail_credentials()
+    service = build("gmail", "v1", credentials=creds)
+    label_id = get_or_create_label(service)
+    service.users().messages().modify(
+        userId="me", id=message_id, body={"addLabelIds": [label_id]}
+    ).execute()
 
 
 def call_claude_extraction(pdf_bytes: bytes) -> str:
@@ -162,15 +192,17 @@ def send_whatsapp(message: str):
 
 @app.route("/run-weekly", methods=["POST", "GET"])
 def run_weekly():
+    """Triggered by cron-job.org, hourly on Fridays."""
     if request.args.get("secret") != os.environ["CRON_SECRET"]:
         return "unauthorized", 401
 
-    pdf_bytes = find_latest_schedule_pdf()
+    pdf_bytes, message_id = find_latest_schedule_pdf()
     if not pdf_bytes:
-        return "no schedule email found this week", 200
+        return "no new schedule email found", 200
 
     digest = call_claude_extraction(pdf_bytes)
     send_whatsapp(digest)
+    mark_as_processed(message_id)
     return "sent", 200
 
 
