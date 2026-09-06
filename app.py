@@ -63,10 +63,18 @@ Output ONLY the digest text, ready to send as-is on WhatsApp. No preamble.
 
 
 def get_gmail_credentials():
+    """Prefer the token stored in the GMAIL_TOKEN_JSON env var (survives
+    restarts). Fall back to the local file (works within one running
+    instance, e.g. right after a fresh /auth)."""
+    env_token = os.environ.get("GMAIL_TOKEN_JSON")
+    if env_token:
+        try:
+            return Credentials.from_authorized_user_info(json.loads(env_token), SCOPES)
+        except Exception:
+            pass
     if not os.path.exists(TOKEN_FILE):
         return None
-    creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    return creds
+    return Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
 
 
 @app.route("/")
@@ -98,9 +106,16 @@ def oauth2callback():
     )
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
+    token_json = creds.to_json()
     with open(TOKEN_FILE, "w") as f:
-        f.write(creds.to_json())
-    return "Gmail connected! You can close this page. The bot will now run automatically every Friday."
+        f.write(token_json)
+    return (
+        "Gmail connected! To make this survive server restarts, copy the text box below "
+        "and paste it as a NEW Render environment variable named GMAIL_TOKEN_JSON "
+        "(Render dashboard > your service > Environment > Add Environment Variable), "
+        "then save.<br><br>"
+        f"<textarea readonly style='width:95%;height:150px;'>{token_json}</textarea>"
+    )
 
 
 LABEL_NAME = "ScheduleBotProcessed"
@@ -118,8 +133,6 @@ def get_or_create_label(service):
 
 
 def find_latest_schedule_pdf():
-    """Search Gmail for the newest UNPROCESSED matching email and return the PDF bytes.
-    Returns (pdf_bytes, message_id) or (None, None) if nothing new found."""
     from googleapiclient.discovery import build
 
     creds = get_gmail_credentials()
