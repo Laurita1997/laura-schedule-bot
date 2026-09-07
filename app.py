@@ -226,6 +226,12 @@ def run_weekly():
     mark_as_processed(message_id)
     return "sent", 200
 
-
+@app.route("/test-whatsapp", methods=["GET"])
+def test_whatsapp():
+    if request.args.get("secret") != os.environ["CRON_SECRET"]:
+        return "unauthorized", 401
+    send_whatsapp("Test-Nachricht vom Bot 🎉")
+    return "test sent", 200
+    
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
