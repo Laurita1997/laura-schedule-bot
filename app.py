@@ -199,8 +199,10 @@ def send_whatsapp(message: str):
     client.messages.create(
         from_=f"whatsapp:{os.environ['TWILIO_WHATSAPP_NUMBER']}",
         to=f"whatsapp:{os.environ['MY_WHATSAPP_NUMBER']}",
-        body=message,
+        content_sid="HXa5df9644ee2a42709bf11b6de6aa153b",
+        content_variables=f'{{"1": "{message}"}}',
     )
+
 
 
 @app.route("/run-weekly", methods=["POST", "GET"])
