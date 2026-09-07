@@ -193,14 +193,20 @@ def call_claude_extraction(pdf_bytes: bytes) -> str:
 
 
 def send_whatsapp(message: str):
-    from twilio.rest import Client
+    import requests
 
-    client = Client(os.environ["TWILIO_SID"], os.environ["TWILIO_AUTH_TOKEN"])
-    client.messages.create(
-        from_=f"whatsapp:{os.environ['TWILIO_WHATSAPP_NUMBER']}",
-        to=f"whatsapp:{os.environ['MY_WHATSAPP_NUMBER']}",
-        body=message,
-    )
+    id_instance = "710522730585"
+    api_token = "a11f9c07c9454de4b706b1c38da02fb6af528d66bbe045f19a"
+    chat_id = f"{os.environ['MY_WHATSAPP_NUMBER']}@c.us"
+
+    url = f"https://7105.api.greenapi.com/waInstance{id_instance}/sendMessage/{api_token}"
+    payload = {
+        "chatId": chat_id,
+        "message": message,
+    }
+    response = requests.post(url, json=payload)
+    response.raise_for_status()
+
 
 
 
