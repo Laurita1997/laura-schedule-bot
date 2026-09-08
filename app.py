@@ -91,41 +91,66 @@ literally true:
     normally dances.
 (f) If a "Variation" number is specified (e.g. "Variation 3") and it is not
     her Variation 6, it is NOT hers, even if the ballet matches.
-(g) When genuinely unsure, leave the slot OUT rather than guess.
+(g) A slot labeled with "Bes. [date(s)]" (e.g. "Solo Damen & Herren Bes.
+    18.09. & 25.09.", "3 Principal couples Bes. 25.09.") refers to a
+    SPECIFIC PERFORMANCE cast assignment for those particular show dates,
+    NOT a general availability rehearsal. Do NOT auto-match this via rule
+    (c) unless her name is literally written in the slot - performance-
+    specific casting can't be reliably inferred from the general role list.
+(h) When genuinely unsure, leave the slot OUT rather than guess.
 
 Before finalizing, do a second pass: explicitly check every day for any
 slot labeled "Entire Cast" and any slot with her literal name that you may
 have missed on the first pass, especially in side columns.
 
-Other rules:
-1. ALWAYS include BOTH training sessions for each day, with studio and
-   teacher(s), even though she's only in one of them.
-2. For each of her rehearsals, list only: time, piece, studio. Do not list
-   who else is dancing, coaching, or which other dancers are excluded/late/
-   early - UNLESS that note directly affects HER call time (e.g. "Fernandez
-   G. bis 13:25" or an "ab HH:MM" note that changes when she personally
-   needs to arrive/can leave).
-3. If a note changes HER OWN call time (e.g. "ab 16:30", "bis 13:30",
+Content rules - what to include per matched slot:
+1. Studio/room, always.
+2. If the slot explicitly names specific dancers alongside her (e.g.
+   "Fernandez G., Mitsumori" or "Trenary, Casalinho, Fernandez G."),
+   include those names.
+3. Teacher/coach names:
+   - For Training sessions, ALWAYS include the teacher name.
+   - For any Rhapsody slot that is hers, ALWAYS include the teacher/coach
+     name(s).
+   - For large generic Divertimento sessions with the standard recurring
+     coaching team (e.g. Jennings/Necsea/Alosa/Kohoutková/Takizawa), you do
+     NOT need to list the teacher name, unless it includes Ferri - if Ferri
+     is among the teachers, always include "Ferri".
+   - NEVER include the pianist/répétiteur. In a slash-separated name list
+     (e.g. "Gomes/ Takizawa", "Ferri/ Ishida", "Jennings/ Necsea/
+     Takizawa"), the LAST name is the pianist/répétiteur - drop it, keep
+     only the name(s) before it as the teacher/coach(es).
+4. Do not mention who else is dancing/coaching beyond the above, and do not
+   mention which other dancers are excluded, late, or early - UNLESS that
+   note directly affects HER OWN call time (e.g. "Fernandez G. bis 13:25").
+5. Both training sessions of the day (e.g. Blue Group and Purple Group, or
+   Damen and Herren) go on ONE combined line joined by " ODER ", each with
+   its own studio and teacher, e.g.:
+   "**10:00-11:15** Training Blue Group – BS1 (Gomes) ODER Training Purple
+   Group – BS2 (Rachedi)"
+6. If a note changes HER OWN call time (e.g. "ab 16:30", "bis 13:30",
    "Fernandez G. bis 13:25"), adjust the shown time to reflect her real call
    time and add a brief 2-4 word reason.
-4. If she is explicitly excluded ("ohne Fernandez G." or "ohne [her name]"),
+7. If she is explicitly excluded ("ohne Fernandez G." or "ohne [her name]"),
    leave that slot out entirely.
-5. Skip days with nothing relevant beyond the two trainings.
-6. Format: "**Day DD.MM**" header per day, then bullet lines. Keep compact -
-   this is read on a phone. No extra commentary, no "who's dancing with
-   whom" unless it's her own partner in a named slot.
-7. Bold every time/time-range shown, including training times (e.g.
-   "**10:00-11:15**"), using markdown double-asterisks.
-8. At the very end of the digest, after all days, add a short summary
-   section titled "**Feierabend:**" listing, for each day that has any
-   entries, the day name and the LATEST end time she has that day (i.e.
-   when she is done for the day) - e.g.:
-   Mo 14:20
-   Di 14:20
-   Mi 16:10
-   Only include days that had at least one relevant slot for her. Use her
-   adjusted/real times (per rule 3 above) when computing this, not the
-   printed slot time if a note changed her actual end time.
+8. Skip days with nothing relevant beyond the training line.
+9. Format: "**Day DD.MM**" header per day, then one bullet per line, each
+   starting with "•", with a blank line between bullets. Keep compact -
+   this is read on a phone.
+10. Bold every time/time-range shown, using markdown double-asterisks (e.g.
+    "**10:00-11:15**").
+11. At the very end of the digest, after all days, add a section titled
+    "**Feierabend:**" listing, for each day that has any entries, the day
+    abbreviation and the LATEST end time she has that day (when she is done
+    for the day) - e.g.:
+    Mo 14:20
+    Di 14:20
+    Mi 16:10
+    Only include days that had at least one relevant slot for her. Use her
+    adjusted/real end time (per rule 6) when computing this, not the
+    printed slot time if a note changed her actual end time. If her only
+    relevant slot that day is a voluntary training ("Training freiw."),
+    still include it and label it "(freiwillig)".
 
 CRITICAL OUTPUT RULE: The output must be the clean final digest ONLY. Never
 include your own reasoning, checkmarks (✅/❌), exclusion notes about why a
@@ -204,151 +229,4 @@ def get_or_create_label(service):
         if lbl["name"] == LABEL_NAME:
             return lbl["id"]
     new_label = service.users().labels().create(
-        userId="me", body={"name": LABEL_NAME, "labelListVisibility": "labelHide", "messageListVisibility": "hide"}
-    ).execute()
-    return new_label["id"]
-
-
-def find_latest_schedule_pdf():
-    from googleapiclient.discovery import build
-
-    creds = get_gmail_credentials()
-    service = build("gmail", "v1", credentials=creds)
-    get_or_create_label(service)
-
-    query = f'from:{SENDER_EMAIL} has:attachment newer_than:7d -label:{LABEL_NAME}'
-    results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
-    messages = results.get("messages", [])
-
-    if not messages:
-        query = f'subject:"{BACKUP_SUBJECT}" has:attachment newer_than:7d -label:{LABEL_NAME}'
-        results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
-        messages = results.get("messages", [])
-
-    if not messages:
-        return None, None
-
-    msg_id = messages[0]["id"]
-    msg = service.users().messages().get(userId="me", id=msg_id).execute()
-    for part in msg["payload"].get("parts", []):
-        if part["filename"].lower().endswith(".pdf"):
-            att_id = part["body"]["attachmentId"]
-            att = service.users().messages().attachments().get(
-                userId="me", messageId=msg_id, id=att_id
-            ).execute()
-            pdf_bytes = base64.urlsafe_b64decode(att["data"])
-            return pdf_bytes, msg_id
-    return None, None
-
-
-def find_cast_list_pdf():
-    """Looks for an email with 'Cast list' in the subject, from anyone,
-    regardless of age. Returns a LIST of all PDF attachments found (the
-    email may contain one PDF per ballet, e.g. Rhapsody, Divertimento,
-    Nijinsky). Returns an empty list if none found."""
-    from googleapiclient.discovery import build
-
-    creds = get_gmail_credentials()
-    service = build("gmail", "v1", credentials=creds)
-
-    query = f'subject:"{CAST_LIST_SUBJECT}" has:attachment'
-    results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
-    messages = results.get("messages", [])
-
-    if not messages:
-        return []
-
-    msg_id = messages[0]["id"]
-    msg = service.users().messages().get(userId="me", id=msg_id).execute()
-
-    pdfs = []
-    for part in msg["payload"].get("parts", []):
-        if part["filename"].lower().endswith(".pdf"):
-            att_id = part["body"]["attachmentId"]
-            att = service.users().messages().attachments().get(
-                userId="me", messageId=msg_id, id=att_id
-            ).execute()
-            pdfs.append(base64.urlsafe_b64decode(att["data"]))
-    return pdfs
-
-
-def mark_as_processed(message_id):
-    from googleapiclient.discovery import build
-
-    creds = get_gmail_credentials()
-    service = build("gmail", "v1", credentials=creds)
-    label_id = get_or_create_label(service)
-    service.users().messages().modify(
-        userId="me", id=message_id, body={"addLabelIds": [label_id]}
-    ).execute()
-
-
-def call_claude_extraction(pdf_bytes: bytes, cast_list_pdfs: list = None) -> str:
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
-
-    content = [
-        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
-    ]
-
-    cast_list_pdfs = cast_list_pdfs or []
-    for cast_pdf in cast_list_pdfs:
-        cast_b64 = base64.standard_b64encode(cast_pdf).decode("utf-8")
-        content.append(
-            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": cast_b64}}
-        )
-
-    prompt = build_extraction_prompt(has_cast_list=len(cast_list_pdfs) > 0)
-    content.append({"type": "text", "text": prompt})
-
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2000,
-        messages=[{"role": "user", "content": content}],
-    )
-    return "".join(b.text for b in response.content if b.type == "text")
-
-
-def send_whatsapp(message: str):
-    import requests
-
-    id_instance = "710522730585"
-    api_token = "a11f9c07c9454de4b706b1c38da02fb6af528d66bbe045f19a"
-    chat_id = f"{os.environ['MY_WHATSAPP_NUMBER']}@c.us"
-
-    url = f"https://7105.api.greenapi.com/waInstance{id_instance}/sendMessage/{api_token}"
-    payload = {
-        "chatId": chat_id,
-        "message": message,
-    }
-    response = requests.post(url, json=payload)
-    response.raise_for_status()
-
-
-@app.route("/run-weekly", methods=["POST", "GET"])
-def run_weekly():
-    """Triggered by cron-job.org, hourly on Fridays."""
-    if request.args.get("secret") != os.environ["CRON_SECRET"]:
-        return "unauthorized", 401
-
-    pdf_bytes, message_id = find_latest_schedule_pdf()
-    if not pdf_bytes:
-        return "no new schedule email found", 200
-
-    cast_list_pdfs = find_cast_list_pdf()
-    digest = call_claude_extraction(pdf_bytes, cast_list_pdfs)
-    send_whatsapp(digest)
-    mark_as_processed(message_id)
-    return "sent", 200
-
-
-@app.route("/test-whatsapp", methods=["GET"])
-def test_whatsapp():
-    if request.args.get("secret") != os.environ["CRON_SECRET"]:
-        return "unauthorized", 401
-    send_whatsapp("Test-Nachricht vom Bot 🎉")
-    return "test sent", 200
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+        userId="me", body={"name": LABEL_N
