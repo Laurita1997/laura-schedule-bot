@@ -43,11 +43,13 @@ labels in the schedule):
 
     if has_cast_list:
         base += """
-A SECOND PDF is also attached: a current Cast List. Use it as the
-authoritative source for her current roles - it may show new or updated
-roles beyond the fallback list above. Cross-reference her name ("Fernandez
-G.") in the Cast List to determine which roles/variations are hers, then
-apply that when matching slots in the weekly schedule.
+One or more additional PDFs are also attached: Cast Lists, one per ballet
+(e.g. Rhapsody, Divertimento No. 15, and possibly others like Nijinsky that
+are NOT relevant to her). Only use the Cast List(s) for ballets she actually
+appears in this week's schedule. Cross-reference her name ("Fernandez G.")
+in the relevant Cast List(s) to determine which roles/variations are hers,
+then apply that when matching slots in the weekly schedule. Ignore Cast
+Lists for ballets she has no role in.
 """
     else:
         base += """
@@ -113,10 +115,16 @@ Other rules:
    this is read on a phone. No extra commentary, no "who's dancing with
    whom" unless it's her own partner in a named slot.
 
+CRITICAL OUTPUT RULE: The output must be the clean final digest ONLY. Never
+include your own reasoning, checkmarks (✅/❌), exclusion notes about why a
+slot was left out, or any meta-commentary. Just silently omit anything that
+doesn't belong to her - the reader should never see your decision process.
+If the attached weekly schedule PDF is missing or unreadable, still do your
+best with whatever is legible rather than refusing outright.
+
 Output ONLY the digest text, ready to send as-is on WhatsApp. No preamble.
 """
     return base
-
 
 
 def get_gmail_credentials():
@@ -223,8 +231,9 @@ def find_latest_schedule_pdf():
 
 def find_cast_list_pdf():
     """Looks for an email with 'Cast list' in the subject, from anyone,
-    regardless of age. Returns the newest match's PDF, or None if none
-    exists. This is independent of the weekly schedule search/label."""
+    regardless of age. Returns a LIST of all PDF attachments found (the
+    email may contain one PDF per ballet, e.g. Rhapsody, Divertimento,
+    Nijinsky). Returns an empty list if none found."""
     from googleapiclient.discovery import build
 
     creds = get_gmail_credentials()
@@ -235,18 +244,20 @@ def find_cast_list_pdf():
     messages = results.get("messages", [])
 
     if not messages:
-        return None
+        return []
 
     msg_id = messages[0]["id"]
     msg = service.users().messages().get(userId="me", id=msg_id).execute()
+
+    pdfs = []
     for part in msg["payload"].get("parts", []):
         if part["filename"].lower().endswith(".pdf"):
             att_id = part["body"]["attachmentId"]
             att = service.users().messages().attachments().get(
                 userId="me", messageId=msg_id, id=att_id
             ).execute()
-            return base64.urlsafe_b64decode(att["data"])
-    return None
+            pdfs.append(base64.urlsafe_b64decode(att["data"]))
+    return pdfs
 
 
 def mark_as_processed(message_id):
@@ -260,7 +271,7 @@ def mark_as_processed(message_id):
     ).execute()
 
 
-def call_claude_extraction(pdf_bytes: bytes, cast_list_bytes: bytes = None) -> str:
+def call_claude_extraction(pdf_bytes: bytes, cast_list_pdfs: list = None) -> str:
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
 
@@ -268,13 +279,14 @@ def call_claude_extraction(pdf_bytes: bytes, cast_list_bytes: bytes = None) -> s
         {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
     ]
 
-    if cast_list_bytes:
-        cast_b64 = base64.standard_b64encode(cast_list_bytes).decode("utf-8")
+    cast_list_pdfs = cast_list_pdfs or []
+    for cast_pdf in cast_list_pdfs:
+        cast_b64 = base64.standard_b64encode(cast_pdf).decode("utf-8")
         content.append(
             {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": cast_b64}}
         )
 
-    prompt = build_extraction_prompt(has_cast_list=cast_list_bytes is not None)
+    prompt = build_extraction_prompt(has_cast_list=len(cast_list_pdfs) > 0)
     content.append({"type": "text", "text": prompt})
 
     response = client.messages.create(
@@ -311,8 +323,8 @@ def run_weekly():
     if not pdf_bytes:
         return "no new schedule email found", 200
 
-    cast_list_bytes = find_cast_list_pdf()
-    digest = call_claude_extraction(pdf_bytes, cast_list_bytes)
+    cast_list_pdfs = find_cast_list_pdf()
+    digest = call_claude_extraction(pdf_bytes, cast_list_pdfs)
     send_whatsapp(digest)
     mark_as_processed(message_id)
     return "sent", 200
