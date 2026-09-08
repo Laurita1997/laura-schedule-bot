@@ -20,6 +20,7 @@ TOKEN_FILE = "gmail_token.json"
 MY_NAME = "Fernandez G."
 SENDER_EMAIL = "ismenia.keck@wiener-staatsballett.at"
 BACKUP_SUBJECT = "Cast list"
+CAST_LIST_SUBJECT = "Cast list"
 
 MY_ROLES = {
     "Rhapsody": "Solo Dame (only one Solo Dame role in this piece; partnered with Mitsumori)",
@@ -28,22 +29,43 @@ MY_ROLES = {
                             "NOT other Solo Dame variations)",
 }
 
-EXTRACTION_PROMPT = f"""You are reading a Wiener Staatsballett weekly rehearsal
+
+def build_extraction_prompt(has_cast_list: bool) -> str:
+    base = f"""You are reading a Wiener Staatsballett weekly rehearsal
 schedule PDF (one page per day, Mon-Sun). Build a WhatsApp-ready digest for
 the dancer "{MY_NAME}".
 
-Her roles by ballet (use this to match generic role labels in the schedule):
+Her last known roles by ballet (use this as a fallback to match generic role
+labels in the schedule):
 {chr(10).join(f"- {ballet}: {role}" for ballet, role in MY_ROLES.items())}
+"""
 
+    if has_cast_list:
+        base += """
+A SECOND PDF is also attached: a current Cast List. Use it as the
+authoritative source for her current roles - it may show new or updated
+roles beyond the fallback list above. Cross-reference her name ("Fernandez
+G.") in the Cast List to determine which roles/variations are hers, then
+apply that when matching slots in the weekly schedule.
+"""
+    else:
+        base += """
+NO Cast List PDF was found this week. Rely only on the fallback roles listed
+above. IMPORTANT: Start the digest with this exact warning line before
+anything else:
+"⚠️ Keine Cast List gefunden – Rollen basieren auf letztem bekannten Stand, bitte prüfen falls sich was geändert hat"
+"""
+
+    base += """
 Rules:
-1a. Include a slot ONLY if "{MY_NAME}" is literally named in it, OR the slot
-    label is "Entire Cast" (always applies to everyone in that ballet), OR the
-    slot label is a generic group that includes her role (e.g. "Alle
+1a. Include a slot ONLY if "Fernandez G." is literally named in it, OR the
+    slot label is "Entire Cast" (always applies to everyone in that ballet),
+    OR the slot label is a generic group that includes her role (e.g. "Alle
     Solodamen & Herren", "Solo Damen & Herren") - these apply to her.
 1b. Do NOT include a slot just because it mentions "Solo Dame" if there are
     MULTIPLE solo dame variations in that ballet and the slot names a
     different variation number or different dancers than her - only match
-    her specific variation/role as listed above, or her literal name.
+    her specific variation/role, or her literal name.
 1c. NEVER invent or assume a slot applies to her without one of the above
     being literally true in the source text. If unsure, leave it out rather
     than guess.
@@ -60,6 +82,7 @@ Rules:
 
 Output ONLY the digest text, ready to send as-is on WhatsApp. No preamble.
 """
+    return base
 
 
 def get_gmail_credentials():
@@ -164,6 +187,34 @@ def find_latest_schedule_pdf():
     return None, None
 
 
+def find_cast_list_pdf():
+    """Looks for an email with 'Cast list' in the subject, from anyone,
+    regardless of age. Returns the newest match's PDF, or None if none
+    exists. This is independent of the weekly schedule search/label."""
+    from googleapiclient.discovery import build
+
+    creds = get_gmail_credentials()
+    service = build("gmail", "v1", credentials=creds)
+
+    query = f'subject:"{CAST_LIST_SUBJECT}" has:attachment'
+    results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
+    messages = results.get("messages", [])
+
+    if not messages:
+        return None
+
+    msg_id = messages[0]["id"]
+    msg = service.users().messages().get(userId="me", id=msg_id).execute()
+    for part in msg["payload"].get("parts", []):
+        if part["filename"].lower().endswith(".pdf"):
+            att_id = part["body"]["attachmentId"]
+            att = service.users().messages().attachments().get(
+                userId="me", messageId=msg_id, id=att_id
+            ).execute()
+            return base64.urlsafe_b64decode(att["data"])
+    return None
+
+
 def mark_as_processed(message_id):
     from googleapiclient.discovery import build
 
@@ -175,19 +226,27 @@ def mark_as_processed(message_id):
     ).execute()
 
 
-def call_claude_extraction(pdf_bytes: bytes) -> str:
+def call_claude_extraction(pdf_bytes: bytes, cast_list_bytes: bytes = None) -> str:
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+
+    content = [
+        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+    ]
+
+    if cast_list_bytes:
+        cast_b64 = base64.standard_b64encode(cast_list_bytes).decode("utf-8")
+        content.append(
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": cast_b64}}
+        )
+
+    prompt = build_extraction_prompt(has_cast_list=cast_list_bytes is not None)
+    content.append({"type": "text", "text": prompt})
+
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=2000,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
-                {"type": "text", "text": EXTRACTION_PROMPT},
-            ],
-        }],
+        messages=[{"role": "user", "content": content}],
     )
     return "".join(b.text for b in response.content if b.type == "text")
 
@@ -208,9 +267,6 @@ def send_whatsapp(message: str):
     response.raise_for_status()
 
 
-
-
-
 @app.route("/run-weekly", methods=["POST", "GET"])
 def run_weekly():
     """Triggered by cron-job.org, hourly on Fridays."""
@@ -221,10 +277,12 @@ def run_weekly():
     if not pdf_bytes:
         return "no new schedule email found", 200
 
-    digest = call_claude_extraction(pdf_bytes)
+    cast_list_bytes = find_cast_list_pdf()
+    digest = call_claude_extraction(pdf_bytes, cast_list_bytes)
     send_whatsapp(digest)
     mark_as_processed(message_id)
     return "sent", 200
+
 
 @app.route("/test-whatsapp", methods=["GET"])
 def test_whatsapp():
@@ -232,6 +290,7 @@ def test_whatsapp():
         return "unauthorized", 401
     send_whatsapp("Test-Nachricht vom Bot 🎉")
     return "test sent", 200
-    
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
