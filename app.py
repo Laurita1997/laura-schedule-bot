@@ -29,12 +29,42 @@ MY_ROLES = {
                             "NOT other Solo Dame variations)",
 }
 
+TRANSCRIPTION_PROMPT = """You are transcribing a Wiener Staatsballett weekly
+rehearsal schedule PDF (one page per day, Mon-Sun, with multiple room
+columns per page: Ballettsaal 1, Ballettsaal 2, BS3, BAK/Anproben, div.
+Orte, Gäste, Sonstiges - column names vary slightly by day).
 
-def build_extraction_prompt(has_cast_list: bool) -> str:
-    base = f"""You are reading a Wiener Staatsballett weekly rehearsal
-schedule PDF (one page per day, Mon-Sun, with multiple room columns per
-page: Ballettsaal 1, Ballettsaal 2, BS3, BAK/Anproben, div. Orte, Gäste,
-Sonstiges).
+Your ONLY job is to transcribe EVERY slot from EVERY column on EVERY day,
+completely and literally, in reading order. Do NOT decide what is
+relevant, do NOT filter anything out, do NOT summarize, do NOT skip
+anything - including entries that look purely administrative, costume
+fittings ("Anprobe"), or entries tucked into side columns like
+"BAK/Anproben" or "div. Orte". Those side columns often contain real
+rehearsals in named rooms (e.g. Hilverdingsaal, Wiesenthalsaal,
+Elsslersaal, Hankasaal, Wiesenthalsaal) - transcribe those too.
+
+For each day, output exactly in this format:
+
+=== <Weekday>, DD.MM ===
+<studio/column name> | <HH:MM-HH:MM> | <piece/activity name> | <ALL dancer
+names listed in that slot, exactly as printed> | <ALL teacher/coach/pianist
+names exactly as printed, including slashes> | <any notes: "ohne ...", "n.
+Mög.", "Bes. [date]", "ab/bis" time adjustments, anything else printed in
+that slot>
+
+One line per slot. Use "-" for any field that is empty/not applicable, but
+never drop a field - always keep the five " | "-separated parts (piece,
+names, teachers, notes) after studio and time. Preserve exact wording,
+spelling, and abbreviations of names and notes - do not paraphrase.
+
+Output ONLY the transcript in this format, nothing else. No commentary, no
+introduction, no summary."""
+
+
+def build_digest_prompt(has_cast_list: bool) -> str:
+    base = f"""You are given a literal transcript of a Wiener Staatsballett
+weekly rehearsal schedule (produced by a separate transcription pass), for
+the dancer "{MY_NAME}". Build a WhatsApp-ready digest for her.
 
 Her last known roles by ballet (use this as a fallback to match generic role
 labels in the schedule):
@@ -43,12 +73,12 @@ labels in the schedule):
 
     if has_cast_list:
         base += """
-One or more additional PDFs are also attached: Cast Lists, one per ballet
-(e.g. Rhapsody, Divertimento No. 15, and possibly others like Nijinsky that
-are NOT relevant to her). Only use the Cast List(s) for ballets she actually
-appears in this week's schedule. Cross-reference her name ("Fernandez G.")
-in the relevant Cast List(s) to determine which roles/variations are hers,
-then apply that when matching slots in the weekly schedule. Ignore Cast
+One or more Cast List PDFs are also attached, one per ballet (e.g.
+Rhapsody, Divertimento No. 15, and possibly others like Nijinsky that are
+NOT relevant to her). Only use the Cast List(s) for ballets she actually
+appears in this week's transcript. Cross-reference her name ("Fernandez
+G.") in the relevant Cast List(s) to determine which roles/variations are
+hers, then apply that when matching slots in the transcript. Ignore Cast
 Lists for ballets she has no role in.
 """
     else:
@@ -60,129 +90,94 @@ anything else:
 """
 
     base += """
-CRITICAL - scan every single column on every single day, including the
-BAK/Anproben and "div. Orte" columns. These are NOT purely administrative -
-they often contain real rehearsals in named rooms (e.g. Hilverdingsaal,
-Wiesenthalsaal, Elsslersaal, Hankasaal, Wiesenthalsaal), mixed in with
-costume-fitting ("Anprobe") entries. Do not skip these columns. A rehearsal
-slot with her name in it can appear in ANY column, not just Ballettsaal 1/2/3.
+The transcript format is:
+studio | time | piece | dancer names | teacher/pianist names | notes
 
 Matching rules - a slot belongs to her if AND ONLY IF one of these is
-literally true:
-(a) Her name "Fernandez G." is literally printed in that slot.
-(b) The slot is labeled "Entire Cast" - this ALWAYS includes her, for any
-    ballet she has a role in. Do not skip these - actively look for the
-    exact phrase "Entire Cast" on every single day and studio column.
-(c) The slot uses a GENERIC group label that matches her role type:
+literally true in the transcript's "dancer names" or "piece" field:
+(a) Her name "Fernandez G." is literally in the dancer names field.
+(b) The piece field says "Entire Cast" - this ALWAYS includes her, for any
+    ballet she has a role in. Actively check every single transcribed line
+    for this exact phrase.
+(c) The dancer names field is a GENERIC group label matching her role type:
     - "Alle Solodamen & Herren" / "Solo Damen & Herren" / "alle available
       Solo Da. & Herr." -> matches her (she is a Solo Dame). EXCEPTION: see
-      rule (g) below - if the same label also has "Bes. [date]" attached,
-      it does NOT match.
+      rule (g) below.
     - For Rhapsody specifically: the label "Solo Dame" (SINGULAR) refers
       directly to her, since she is the only Solo Dame in that piece. Match
-      it even if the slot also lists other named dancers (e.g. "Solo Dame &
-      6 Herren"). This is DIFFERENT from a slot like "6 Damen & Mitsumori"
-      which does NOT contain the word "Solo" and is NOT hers (see rule d).
-(d) Do NOT match slots with a SPECIFIC HEADCOUNT + gender label that does
-    NOT contain the word "Solo", e.g. "6 Damen & 6 Herren", "9 Bakst
-    Damen", "8 Damen Gruppe", "6 Damen & Mitsumori" - these refer to the
-    corps/ensemble, not her solo role. A ballet may have BOTH a headcount
-    slot (not hers) and a separate "Solo Dame" slot (hers) on the same
-    day, in different studios or different times - check carefully which
-    one you're looking at, they are not interchangeable.
-(e) Do NOT match a slot that lists specific dancer names ONLY (a fixed
-    named list, e.g. "Lynch, Fredianelli, Cislaghi, Kim, Liz, Vandervelde,
-    Cagnin") unless her name is literally among those listed. A named list
-    that excludes her by omission is NOT hers, even if it's in a ballet she
-    normally dances.
-(f) If a "Variation" number is specified (e.g. "Variation 3") and it is not
-    her Variation 6, it is NOT hers, even if the ballet matches.
-(g) CRITICAL EXCLUSION - a slot labeled with "Bes. [date(s)]" anywhere in
-    it (e.g. "Solo Damen & Herren Bes. 18.09. & 25.09.", "3 Principal
-    couples Bes. 25.09.") refers to a SPECIFIC PERFORMANCE cast assignment
-    for those particular show dates, NOT a general availability rehearsal.
-    This OVERRIDES rule (c) - even though the group label looks like it
-    would normally match her, "Bes. [date]" means it does NOT, unless her
-    name is literally written in that exact slot. Example: "Solo Damen &
-    Herren Bes. 18.09. & 25.09." (no name given) -> EXCLUDE, even though
-    "Solo Damen & Herren" alone would normally match.
+      it even if other named dancers are also listed (e.g. "Solo Dame & 6
+      Herren").
+(d) Do NOT match a dancer-names field that is a HEADCOUNT + gender label
+    NOT containing the word "Solo", e.g. "6 Damen & 6 Herren", "9 Bakst
+    Damen", "8 Damen Gruppe", "6 Damen & Mitsumori" - these are the
+    corps/ensemble, not her. A day may have BOTH a headcount line (not
+    hers) and a separate "Solo Dame" line (hers) - check the exact wording
+    of each transcript line independently, do not assume based on the
+    piece name alone.
+(e) Do NOT match a dancer-names field that is a fixed named list NOT
+    including her (e.g. "Lynch, Fredianelli, Cislaghi, Kim, Liz,
+    Vandervelde, Cagnin" or "Trenary, Casalinho" without her name) - a
+    named list that omits her is not hers, even in a ballet she normally
+    dances.
+(f) If a "Variation" number is specified and it is not her Variation 6, it
+    is NOT hers, even if the ballet matches.
+(g) CRITICAL - if the notes field or dancer-names field contains "Bes.
+    [date]" (e.g. "Bes. 18.09. & 25.09."), this is a specific PERFORMANCE
+    cast assignment for those show dates, NOT a general rehearsal. This
+    OVERRIDES rule (c) - exclude it unless her name is literally in the
+    dancer-names field for that same line.
 (h) When genuinely unsure, leave the slot OUT rather than guess.
 
-Before finalizing, do a second pass: explicitly check every day for any
-slot labeled "Entire Cast" and any slot with her literal name that you may
-have missed on the first pass, especially in side columns.
+Do a second full pass over the entire transcript checking specifically for
+any line with piece="Entire Cast" or dancer-names containing her literal
+name that you may have missed.
 
 Content rules - what to include per matched slot:
 1. Studio/room, always.
-2. If the slot explicitly names specific dancers alongside her (e.g.
-   "Fernandez G., Mitsumori" or "Trenary, Casalinho, Fernandez G."),
-   ALWAYS include those names - do not drop them. This is required, not
-   optional.
-3. Teacher/coach names: include the full name or names shown for that
-   slot's teacher/pianist line (e.g. "Gomes/ Takizawa", "Ferri/ Ishida").
-   You do not need to figure out which one is the pianist - just include
-   the names as printed. Always include this for Training and Rhapsody
-   slots. For large generic Divertimento sessions with the standard
-   recurring coaching team, you may omit it if it's the same every time,
-   but if "Ferri" appears anywhere in the names, always include it.
-4. Do not mention who else is dancing/coaching beyond rules 2-3, and do not
-   mention which other dancers are excluded, late, or early - UNLESS that
-   note directly affects HER OWN call time (e.g. "Fernandez G. bis 13:25").
-5. Both training sessions of the day MUST be combined into ONE single
-   bullet line joined by " ODER " - this is a hard requirement, never
-   output two separate bullets for training. Required format:
-   "• **10:00-11:15** Training Blue Group – BS1 (Gomes/Takizawa) ODER
-   Training Purple Group – BS2 (Rachedi/Zapravdin)"
-6. If a note changes HER OWN call time (e.g. "ab 16:30", "bis 13:30",
-   "Fernandez G. bis 13:25"), adjust the shown time to reflect her real call
-   time and add a brief 2-4 word reason.
-7. If she is explicitly excluded ("ohne Fernandez G." or "ohne [her name]"),
-   leave that slot out entirely.
+2. If the dancer-names field lists specific dancers alongside her, include
+   those names exactly as transcribed.
+3. Include the teacher/pianist names field as transcribed, for Training and
+   Rhapsody slots always; for large generic Divertimento sessions with the
+   standard recurring team you may omit it unless "Ferri" appears in it (if
+   so, always include Ferri).
+4. Do not add any other information from the notes field about who else is
+   excluded/late/early UNLESS it affects HER OWN call time (e.g. "Fernandez
+   G. bis 13:25").
+5. Both training lines for a day MUST be combined into ONE bullet joined by
+   " ODER ", each with its own studio and teacher/pianist names. Required
+   format: "• **10:00-11:15** Training Blue Group – BS1 (Gomes/Takizawa)
+   ODER Training Purple Group – BS2 (Rachedi/Zapravdin)"
+6. If the notes field has a time-adjustment affecting HER (e.g. "ab
+   16:30", "bis 13:30", "Fernandez G. bis 13:25"), adjust the shown time
+   and add a brief 2-4 word reason.
+7. If the notes field says she's excluded ("ohne Fernandez G." or "ohne
+   [her name]"), leave that slot out entirely.
 8. Skip days with nothing relevant beyond the training line.
-9. Format: "**Day DD.MM**" header per day, then one bullet per line, each
-   starting with "•", with a blank line between bullets. Keep compact -
-   this is read on a phone.
-10. Bold every time/time-range shown, using markdown double-asterisks (e.g.
-    "**10:00-11:15**").
-11. At the very end of the digest, after all days, add a section titled
-    "**Feierabend:**" listing, for each day that has any entries, the day
-    abbreviation and the LATEST end time she has that day (when she is done
-    for the day) - e.g.:
-    Mo 14:20
-    Di 14:20
-    Mi 16:10
-    Only include days that had at least one relevant slot for her. Use her
-    adjusted/real end time (per rule 6) when computing this, not the
-    printed slot time if a note changed her actual end time. If her only
-    relevant slot that day is a voluntary training ("Training freiw."),
-    still include it and label it "(freiwillig)".
+9. Format: "**Day DD.MM**" header per day, then one bullet per line
+   starting with "•", blank line between bullets. Keep compact.
+10. Bold every time/time-range using markdown double-asterisks.
+11. At the very end, add "**Feierabend:**" listing, per day with any
+    entries, the day abbreviation and her LATEST end time that day (using
+    her adjusted end time per rule 6, not the raw printed time if a note
+    changed it). If her only slot that day is voluntary training, include
+    it labeled "(freiwillig)".
 
-CRITICAL OUTPUT RULE: The output must be the clean final digest ONLY. Never
-include your own reasoning, checkmarks (✅/❌), exclusion notes about why a
-slot was left out, or any meta-commentary. Just silently omit anything that
-doesn't belong to her - the reader should never see your decision process.
-If the attached weekly schedule PDF is missing or unreadable, still do your
-best with whatever is legible rather than refusing outright.
+CRITICAL OUTPUT RULE: Output the clean final digest ONLY. Never include
+reasoning, checkmarks, or meta-commentary about why something was
+included/excluded - just silently apply the rules.
 
-FINAL SELF-CHECK before outputting - go through this checklist explicitly
-for every day, one item at a time:
-□ Did I combine both trainings into ONE line with " ODER ", each showing
-  its teacher/pianist names?
-□ For every Rhapsody slot I included, did I include the teacher/pianist
+FINAL SELF-CHECK before outputting, go through explicitly for every day:
+□ Both trainings combined into one " ODER " line with teacher/pianist
   names?
-□ For every slot with named dancers alongside her, did I include those
-  names?
-□ Did I check every slot for a "Bes. [date]" label and EXCLUDE it unless
-  her name is literally written in it, even if the general group label
-  would otherwise match? (Double-check Saturday and any performance-week
-  slots specifically for this.)
-□ Did I check every day for "Entire Cast" slots I might have missed?
-□ Did I re-verify that any headcount+gender slot (e.g. "6 Damen & X") is
-  NOT included, and that I didn't confuse it with a real "Solo Dame"
-  (singular) slot elsewhere on the same day?
-□ Did I include any "bis HH:MM [her name]" or "ab HH:MM" notes that affect
-  her own call time?
-Fix any gaps found in this check before producing the final output.
+□ Every included Rhapsody line has teacher/pianist names?
+□ Every line with named dancers alongside her keeps those names?
+□ Every line checked for "Bes. [date]" and excluded unless her name is
+  literally present on that line?
+□ Every "Entire Cast" line found and included?
+□ No headcount-only line (e.g. "6 Damen & X") confused with a real "Solo
+  Dame" (singular) line?
+□ Any "bis HH:MM [her name]" or "ab HH:MM" note reflected in her time?
+Fix any gaps before finalizing.
 
 Output ONLY the digest text, ready to send as-is on WhatsApp. No preamble.
 """
@@ -333,12 +328,31 @@ def mark_as_processed(message_id):
     ).execute()
 
 
-def call_claude_extraction(pdf_bytes: bytes, cast_list_pdfs: list = None) -> str:
+def call_claude_transcribe(pdf_bytes: bytes) -> str:
+    """Step 1: pure transcription of the schedule PDF, no filtering."""
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
 
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=4000,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+                {"type": "text", "text": TRANSCRIPTION_PROMPT},
+            ],
+        }],
+    )
+    return "".join(b.text for b in response.content if b.type == "text")
+
+
+def call_claude_digest(transcript: str, cast_list_pdfs: list = None) -> str:
+    """Step 2: build the filtered, formatted digest from the transcript."""
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
     content = [
-        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+        {"type": "text", "text": f"TRANSCRIPT:\n\n{transcript}"},
     ]
 
     cast_list_pdfs = cast_list_pdfs or []
@@ -348,7 +362,7 @@ def call_claude_extraction(pdf_bytes: bytes, cast_list_pdfs: list = None) -> str
             {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": cast_b64}}
         )
 
-    prompt = build_extraction_prompt(has_cast_list=len(cast_list_pdfs) > 0)
+    prompt = build_digest_prompt(has_cast_list=len(cast_list_pdfs) > 0)
     content.append({"type": "text", "text": prompt})
 
     response = client.messages.create(
@@ -385,8 +399,9 @@ def run_weekly():
     if not pdf_bytes:
         return "no new schedule email found", 200
 
+    transcript = call_claude_transcribe(pdf_bytes)
     cast_list_pdfs = find_cast_list_pdf()
-    digest = call_claude_extraction(pdf_bytes, cast_list_pdfs)
+    digest = call_claude_digest(transcript, cast_list_pdfs)
     send_whatsapp(digest)
     mark_as_processed(message_id)
     return "sent", 200
