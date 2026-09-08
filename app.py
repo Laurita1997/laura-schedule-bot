@@ -75,17 +75,21 @@ literally true:
     exact phrase "Entire Cast" on every single day and studio column.
 (c) The slot uses a GENERIC group label that matches her role type:
     - "Alle Solodamen & Herren" / "Solo Damen & Herren" / "alle available
-      Solo Da. & Herr." -> matches her (she is a Solo Dame).
+      Solo Da. & Herr." -> matches her (she is a Solo Dame). EXCEPTION: see
+      rule (g) below - if the same label also has "Bes. [date]" attached,
+      it does NOT match.
     - For Rhapsody specifically: the label "Solo Dame" (SINGULAR) refers
       directly to her, since she is the only Solo Dame in that piece. Match
       it even if the slot also lists other named dancers (e.g. "Solo Dame &
-      6 Herren").
-(d) Do NOT match slots with a SPECIFIC HEADCOUNT + gender label that is NOT
-    the word "Solo", e.g. "6 Damen & 6 Herren", "9 Bakst Damen", "8 Damen
-    Gruppe", "6 Damen & Mitsumori" - these refer to the corps/ensemble, not
-    her solo role, even if the same day also has a real "Solo Dame" slot
-    elsewhere. Be very careful not to confuse a headcount slot with the
-    singular "Solo Dame" slot on the same day - they are different rows.
+      6 Herren"). This is DIFFERENT from a slot like "6 Damen & Mitsumori"
+      which does NOT contain the word "Solo" and is NOT hers (see rule d).
+(d) Do NOT match slots with a SPECIFIC HEADCOUNT + gender label that does
+    NOT contain the word "Solo", e.g. "6 Damen & 6 Herren", "9 Bakst
+    Damen", "8 Damen Gruppe", "6 Damen & Mitsumori" - these refer to the
+    corps/ensemble, not her solo role. A ballet may have BOTH a headcount
+    slot (not hers) and a separate "Solo Dame" slot (hers) on the same
+    day, in different studios or different times - check carefully which
+    one you're looking at, they are not interchangeable.
 (e) Do NOT match a slot that lists specific dancer names ONLY (a fixed
     named list, e.g. "Lynch, Fredianelli, Cislaghi, Kim, Liz, Vandervelde,
     Cagnin") unless her name is literally among those listed. A named list
@@ -93,14 +97,15 @@ literally true:
     normally dances.
 (f) If a "Variation" number is specified (e.g. "Variation 3") and it is not
     her Variation 6, it is NOT hers, even if the ballet matches.
-(g) A slot labeled with "Bes. [date(s)]" (e.g. "Solo Damen & Herren Bes.
-    18.09. & 25.09.", "3 Principal couples Bes. 25.09.") refers to a
-    SPECIFIC PERFORMANCE cast assignment for those particular show dates,
-    NOT a general availability rehearsal. Do NOT auto-match this via rule
-    (c) unless her name is literally written in the slot - performance-
-    specific casting can't be reliably inferred from the general role list.
-    This applies even if the slot otherwise looks like a generic Solo
-    Damen & Herren rehearsal.
+(g) CRITICAL EXCLUSION - a slot labeled with "Bes. [date(s)]" anywhere in
+    it (e.g. "Solo Damen & Herren Bes. 18.09. & 25.09.", "3 Principal
+    couples Bes. 25.09.") refers to a SPECIFIC PERFORMANCE cast assignment
+    for those particular show dates, NOT a general availability rehearsal.
+    This OVERRIDES rule (c) - even though the group label looks like it
+    would normally match her, "Bes. [date]" means it does NOT, unless her
+    name is literally written in that exact slot. Example: "Solo Damen &
+    Herren Bes. 18.09. & 25.09." (no name given) -> EXCLUDE, even though
+    "Solo Damen & Herren" alone would normally match.
 (h) When genuinely unsure, leave the slot OUT rather than guess.
 
 Before finalizing, do a second pass: explicitly check every day for any
@@ -111,29 +116,23 @@ Content rules - what to include per matched slot:
 1. Studio/room, always.
 2. If the slot explicitly names specific dancers alongside her (e.g.
    "Fernandez G., Mitsumori" or "Trenary, Casalinho, Fernandez G."),
-   ALWAYS include those names - do not drop them.
-3. Teacher/coach names:
-   - For Training sessions, ALWAYS include the teacher name.
-   - For any Rhapsody slot that is hers, ALWAYS include the teacher/coach
-     name(s).
-   - For large generic Divertimento sessions with the standard recurring
-     coaching team (e.g. Jennings/Necsea/Alosa/Kohoutková/Takizawa), you do
-     NOT need to list the teacher name, unless it includes Ferri - if Ferri
-     is among the teachers, always include "Ferri".
-   - NEVER include the pianist/répétiteur. In a slash-separated name list
-     (e.g. "Gomes/ Takizawa", "Ferri/ Ishida", "Jennings/ Necsea/
-     Takizawa"), the LAST name is the pianist/répétiteur - drop it, keep
-     only the name(s) before it as the teacher/coach(es).
-4. Do not mention who else is dancing/coaching beyond the above, and do not
+   ALWAYS include those names - do not drop them. This is required, not
+   optional.
+3. Teacher/coach names: include the full name or names shown for that
+   slot's teacher/pianist line (e.g. "Gomes/ Takizawa", "Ferri/ Ishida").
+   You do not need to figure out which one is the pianist - just include
+   the names as printed. Always include this for Training and Rhapsody
+   slots. For large generic Divertimento sessions with the standard
+   recurring coaching team, you may omit it if it's the same every time,
+   but if "Ferri" appears anywhere in the names, always include it.
+4. Do not mention who else is dancing/coaching beyond rules 2-3, and do not
    mention which other dancers are excluded, late, or early - UNLESS that
    note directly affects HER OWN call time (e.g. "Fernandez G. bis 13:25").
 5. Both training sessions of the day MUST be combined into ONE single
-   bullet line joined by " ODER " - never two separate bullets for
-   training. Each side shows its own studio and teacher (drop the
-   pianist). Example of the REQUIRED format:
-   "• **10:00-11:15** Training Blue Group – BS1 (Gomes) ODER Training
-   Purple Group – BS2 (Rachedi)"
-   Do NOT output two separate training bullets under any circumstances.
+   bullet line joined by " ODER " - this is a hard requirement, never
+   output two separate bullets for training. Required format:
+   "• **10:00-11:15** Training Blue Group – BS1 (Gomes/Takizawa) ODER
+   Training Purple Group – BS2 (Rachedi/Zapravdin)"
 6. If a note changes HER OWN call time (e.g. "ab 16:30", "bis 13:30",
    "Fernandez G. bis 13:25"), adjust the shown time to reflect her real call
    time and add a brief 2-4 word reason.
@@ -168,18 +167,19 @@ best with whatever is legible rather than refusing outright.
 FINAL SELF-CHECK before outputting - go through this checklist explicitly
 for every day, one item at a time:
 □ Did I combine both trainings into ONE line with " ODER ", each showing
-  its own teacher (not the pianist)?
-□ For every Rhapsody slot I included, did I include the teacher/coach name
-  (not the pianist)?
+  its teacher/pianist names?
+□ For every Rhapsody slot I included, did I include the teacher/pianist
+  names?
 □ For every slot with named dancers alongside her, did I include those
   names?
 □ Did I check every slot for a "Bes. [date]" label and EXCLUDE it unless
   her name is literally written in it, even if the general group label
-  would otherwise match?
+  would otherwise match? (Double-check Saturday and any performance-week
+  slots specifically for this.)
 □ Did I check every day for "Entire Cast" slots I might have missed?
 □ Did I re-verify that any headcount+gender slot (e.g. "6 Damen & X") is
-  NOT included, and that I didn't mix it up with a real "Solo Dame"
-  (singular) slot on the same day?
+  NOT included, and that I didn't confuse it with a real "Solo Dame"
+  (singular) slot elsewhere on the same day?
 □ Did I include any "bis HH:MM [her name]" or "ab HH:MM" notes that affect
   her own call time?
 Fix any gaps found in this check before producing the final output.
@@ -291,4 +291,114 @@ def find_latest_schedule_pdf():
     return None, None
 
 
-def find_cast_list_
+def find_cast_list_pdf():
+    """Looks for an email with 'Cast list' in the subject, from anyone,
+    regardless of age. Returns a LIST of all PDF attachments found (the
+    email may contain one PDF per ballet, e.g. Rhapsody, Divertimento,
+    Nijinsky). Returns an empty list if none found."""
+    from googleapiclient.discovery import build
+
+    creds = get_gmail_credentials()
+    service = build("gmail", "v1", credentials=creds)
+
+    query = f'subject:"{CAST_LIST_SUBJECT}" has:attachment'
+    results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
+    messages = results.get("messages", [])
+
+    if not messages:
+        return []
+
+    msg_id = messages[0]["id"]
+    msg = service.users().messages().get(userId="me", id=msg_id).execute()
+
+    pdfs = []
+    for part in msg["payload"].get("parts", []):
+        if part["filename"].lower().endswith(".pdf"):
+            att_id = part["body"]["attachmentId"]
+            att = service.users().messages().attachments().get(
+                userId="me", messageId=msg_id, id=att_id
+            ).execute()
+            pdfs.append(base64.urlsafe_b64decode(att["data"]))
+    return pdfs
+
+
+def mark_as_processed(message_id):
+    from googleapiclient.discovery import build
+
+    creds = get_gmail_credentials()
+    service = build("gmail", "v1", credentials=creds)
+    label_id = get_or_create_label(service)
+    service.users().messages().modify(
+        userId="me", id=message_id, body={"addLabelIds": [label_id]}
+    ).execute()
+
+
+def call_claude_extraction(pdf_bytes: bytes, cast_list_pdfs: list = None) -> str:
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+
+    content = [
+        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+    ]
+
+    cast_list_pdfs = cast_list_pdfs or []
+    for cast_pdf in cast_list_pdfs:
+        cast_b64 = base64.standard_b64encode(cast_pdf).decode("utf-8")
+        content.append(
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": cast_b64}}
+        )
+
+    prompt = build_extraction_prompt(has_cast_list=len(cast_list_pdfs) > 0)
+    content.append({"type": "text", "text": prompt})
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": content}],
+    )
+    return "".join(b.text for b in response.content if b.type == "text")
+
+
+def send_whatsapp(message: str):
+    import requests
+
+    id_instance = "710522730585"
+    api_token = "a11f9c07c9454de4b706b1c38da02fb6af528d66bbe045f19a"
+    chat_id = f"{os.environ['MY_WHATSAPP_NUMBER']}@c.us"
+
+    url = f"https://7105.api.greenapi.com/waInstance{id_instance}/sendMessage/{api_token}"
+    payload = {
+        "chatId": chat_id,
+        "message": message,
+    }
+    response = requests.post(url, json=payload)
+    response.raise_for_status()
+
+
+@app.route("/run-weekly", methods=["POST", "GET"])
+def run_weekly():
+    """Triggered by cron-job.org, hourly on Fridays."""
+    if request.args.get("secret") != os.environ["CRON_SECRET"]:
+        return "unauthorized", 401
+
+    pdf_bytes, message_id = find_latest_schedule_pdf()
+    if not pdf_bytes:
+        return "no new schedule email found", 200
+
+    cast_list_pdfs = find_cast_list_pdf()
+    digest = call_claude_extraction(pdf_bytes, cast_list_pdfs)
+    send_whatsapp(digest)
+    mark_as_processed(message_id)
+    return "sent", 200
+
+
+@app.route("/test-whatsapp", methods=["GET"])
+def test_whatsapp():
+    if request.args.get("secret") != os.environ["CRON_SECRET"]:
+        return "unauthorized", 401
+    send_whatsapp("Test-Nachricht vom Bot 🎉")
+    return "test sent", 200
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
