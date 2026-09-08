@@ -114,6 +114,18 @@ Other rules:
 6. Format: "**Day DD.MM**" header per day, then bullet lines. Keep compact -
    this is read on a phone. No extra commentary, no "who's dancing with
    whom" unless it's her own partner in a named slot.
+7. Bold every time/time-range shown, including training times (e.g.
+   "**10:00-11:15**"), using markdown double-asterisks.
+8. At the very end of the digest, after all days, add a short summary
+   section titled "**Feierabend:**" listing, for each day that has any
+   entries, the day name and the LATEST end time she has that day (i.e.
+   when she is done for the day) - e.g.:
+   Mo 14:20
+   Di 14:20
+   Mi 16:10
+   Only include days that had at least one relevant slot for her. Use her
+   adjusted/real times (per rule 3 above) when computing this, not the
+   printed slot time if a note changed her actual end time.
 
 CRITICAL OUTPUT RULE: The output must be the clean final digest ONLY. Never
 include your own reasoning, checkmarks (✅/❌), exclusion notes about why a
