@@ -82,8 +82,10 @@ literally true:
       6 Herren").
 (d) Do NOT match slots with a SPECIFIC HEADCOUNT + gender label that is NOT
     the word "Solo", e.g. "6 Damen & 6 Herren", "9 Bakst Damen", "8 Damen
-    Gruppe" - these refer to the corps/ensemble, not her solo role, even if
-    the same day also has a Rhapsody or Divertimento slot.
+    Gruppe", "6 Damen & Mitsumori" - these refer to the corps/ensemble, not
+    her solo role, even if the same day also has a real "Solo Dame" slot
+    elsewhere. Be very careful not to confuse a headcount slot with the
+    singular "Solo Dame" slot on the same day - they are different rows.
 (e) Do NOT match a slot that lists specific dancer names ONLY (a fixed
     named list, e.g. "Lynch, Fredianelli, Cislaghi, Kim, Liz, Vandervelde,
     Cagnin") unless her name is literally among those listed. A named list
@@ -97,6 +99,8 @@ literally true:
     NOT a general availability rehearsal. Do NOT auto-match this via rule
     (c) unless her name is literally written in the slot - performance-
     specific casting can't be reliably inferred from the general role list.
+    This applies even if the slot otherwise looks like a generic Solo
+    Damen & Herren rehearsal.
 (h) When genuinely unsure, leave the slot OUT rather than guess.
 
 Before finalizing, do a second pass: explicitly check every day for any
@@ -107,7 +111,7 @@ Content rules - what to include per matched slot:
 1. Studio/room, always.
 2. If the slot explicitly names specific dancers alongside her (e.g.
    "Fernandez G., Mitsumori" or "Trenary, Casalinho, Fernandez G."),
-   include those names.
+   ALWAYS include those names - do not drop them.
 3. Teacher/coach names:
    - For Training sessions, ALWAYS include the teacher name.
    - For any Rhapsody slot that is hers, ALWAYS include the teacher/coach
@@ -123,11 +127,13 @@ Content rules - what to include per matched slot:
 4. Do not mention who else is dancing/coaching beyond the above, and do not
    mention which other dancers are excluded, late, or early - UNLESS that
    note directly affects HER OWN call time (e.g. "Fernandez G. bis 13:25").
-5. Both training sessions of the day (e.g. Blue Group and Purple Group, or
-   Damen and Herren) go on ONE combined line joined by " ODER ", each with
-   its own studio and teacher, e.g.:
-   "**10:00-11:15** Training Blue Group – BS1 (Gomes) ODER Training Purple
-   Group – BS2 (Rachedi)"
+5. Both training sessions of the day MUST be combined into ONE single
+   bullet line joined by " ODER " - never two separate bullets for
+   training. Each side shows its own studio and teacher (drop the
+   pianist). Example of the REQUIRED format:
+   "• **10:00-11:15** Training Blue Group – BS1 (Gomes) ODER Training
+   Purple Group – BS2 (Rachedi)"
+   Do NOT output two separate training bullets under any circumstances.
 6. If a note changes HER OWN call time (e.g. "ab 16:30", "bis 13:30",
    "Fernandez G. bis 13:25"), adjust the shown time to reflect her real call
    time and add a brief 2-4 word reason.
@@ -158,6 +164,25 @@ slot was left out, or any meta-commentary. Just silently omit anything that
 doesn't belong to her - the reader should never see your decision process.
 If the attached weekly schedule PDF is missing or unreadable, still do your
 best with whatever is legible rather than refusing outright.
+
+FINAL SELF-CHECK before outputting - go through this checklist explicitly
+for every day, one item at a time:
+□ Did I combine both trainings into ONE line with " ODER ", each showing
+  its own teacher (not the pianist)?
+□ For every Rhapsody slot I included, did I include the teacher/coach name
+  (not the pianist)?
+□ For every slot with named dancers alongside her, did I include those
+  names?
+□ Did I check every slot for a "Bes. [date]" label and EXCLUDE it unless
+  her name is literally written in it, even if the general group label
+  would otherwise match?
+□ Did I check every day for "Entire Cast" slots I might have missed?
+□ Did I re-verify that any headcount+gender slot (e.g. "6 Damen & X") is
+  NOT included, and that I didn't mix it up with a real "Solo Dame"
+  (singular) slot on the same day?
+□ Did I include any "bis HH:MM [her name]" or "ab HH:MM" notes that affect
+  her own call time?
+Fix any gaps found in this check before producing the final output.
 
 Output ONLY the digest text, ready to send as-is on WhatsApp. No preamble.
 """
@@ -229,4 +254,41 @@ def get_or_create_label(service):
         if lbl["name"] == LABEL_NAME:
             return lbl["id"]
     new_label = service.users().labels().create(
-        userId="me", body={"name": LABEL_N
+        userId="me", body={"name": LABEL_NAME, "labelListVisibility": "labelHide", "messageListVisibility": "hide"}
+    ).execute()
+    return new_label["id"]
+
+
+def find_latest_schedule_pdf():
+    from googleapiclient.discovery import build
+
+    creds = get_gmail_credentials()
+    service = build("gmail", "v1", credentials=creds)
+    get_or_create_label(service)
+
+    query = f'from:{SENDER_EMAIL} has:attachment newer_than:7d -label:{LABEL_NAME}'
+    results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
+    messages = results.get("messages", [])
+
+    if not messages:
+        query = f'subject:"{BACKUP_SUBJECT}" has:attachment newer_than:7d -label:{LABEL_NAME}'
+        results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
+        messages = results.get("messages", [])
+
+    if not messages:
+        return None, None
+
+    msg_id = messages[0]["id"]
+    msg = service.users().messages().get(userId="me", id=msg_id).execute()
+    for part in msg["payload"].get("parts", []):
+        if part["filename"].lower().endswith(".pdf"):
+            att_id = part["body"]["attachmentId"]
+            att = service.users().messages().attachments().get(
+                userId="me", messageId=msg_id, id=att_id
+            ).execute()
+            pdf_bytes = base64.urlsafe_b64decode(att["data"])
+            return pdf_bytes, msg_id
+    return None, None
+
+
+def find_cast_list_
