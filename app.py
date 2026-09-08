@@ -32,8 +32,9 @@ MY_ROLES = {
 
 def build_extraction_prompt(has_cast_list: bool) -> str:
     base = f"""You are reading a Wiener Staatsballett weekly rehearsal
-schedule PDF (one page per day, Mon-Sun). Build a WhatsApp-ready digest for
-the dancer "{MY_NAME}".
+schedule PDF (one page per day, Mon-Sun, with multiple room columns per
+page: Ballettsaal 1, Ballettsaal 2, BS3, BAK/Anproben, div. Orte, Gäste,
+Sonstiges).
 
 Her last known roles by ballet (use this as a fallback to match generic role
 labels in the schedule):
@@ -57,32 +58,65 @@ anything else:
 """
 
     base += """
-Rules:
-1a. Include a slot ONLY if "Fernandez G." is literally named in it, OR the
-    slot label is "Entire Cast" (always applies to everyone in that ballet),
-    OR the slot label is a generic group that includes her role (e.g. "Alle
-    Solodamen & Herren", "Solo Damen & Herren") - these apply to her.
-1b. Do NOT include a slot just because it mentions "Solo Dame" if there are
-    MULTIPLE solo dame variations in that ballet and the slot names a
-    different variation number or different dancers than her - only match
-    her specific variation/role, or her literal name.
-1c. NEVER invent or assume a slot applies to her without one of the above
-    being literally true in the source text. If unsure, leave it out rather
-    than guess.
-2. ALWAYS include BOTH training sessions for each day, with studio and
+CRITICAL - scan every single column on every single day, including the
+BAK/Anproben and "div. Orte" columns. These are NOT purely administrative -
+they often contain real rehearsals in named rooms (e.g. Hilverdingsaal,
+Wiesenthalsaal, Elsslersaal, Hankasaal, Wiesenthalsaal), mixed in with
+costume-fitting ("Anprobe") entries. Do not skip these columns. A rehearsal
+slot with her name in it can appear in ANY column, not just Ballettsaal 1/2/3.
+
+Matching rules - a slot belongs to her if AND ONLY IF one of these is
+literally true:
+(a) Her name "Fernandez G." is literally printed in that slot.
+(b) The slot is labeled "Entire Cast" - this ALWAYS includes her, for any
+    ballet she has a role in. Do not skip these - actively look for the
+    exact phrase "Entire Cast" on every single day and studio column.
+(c) The slot uses a GENERIC group label that matches her role type:
+    - "Alle Solodamen & Herren" / "Solo Damen & Herren" / "alle available
+      Solo Da. & Herr." -> matches her (she is a Solo Dame).
+    - For Rhapsody specifically: the label "Solo Dame" (SINGULAR) refers
+      directly to her, since she is the only Solo Dame in that piece. Match
+      it even if the slot also lists other named dancers (e.g. "Solo Dame &
+      6 Herren").
+(d) Do NOT match slots with a SPECIFIC HEADCOUNT + gender label that is NOT
+    the word "Solo", e.g. "6 Damen & 6 Herren", "9 Bakst Damen", "8 Damen
+    Gruppe" - these refer to the corps/ensemble, not her solo role, even if
+    the same day also has a Rhapsody or Divertimento slot.
+(e) Do NOT match a slot that lists specific dancer names ONLY (a fixed
+    named list, e.g. "Lynch, Fredianelli, Cislaghi, Kim, Liz, Vandervelde,
+    Cagnin") unless her name is literally among those listed. A named list
+    that excludes her by omission is NOT hers, even if it's in a ballet she
+    normally dances.
+(f) If a "Variation" number is specified (e.g. "Variation 3") and it is not
+    her Variation 6, it is NOT hers, even if the ballet matches.
+(g) When genuinely unsure, leave the slot OUT rather than guess.
+
+Before finalizing, do a second pass: explicitly check every day for any
+slot labeled "Entire Cast" and any slot with her literal name that you may
+have missed on the first pass, especially in side columns.
+
+Other rules:
+1. ALWAYS include BOTH training sessions for each day, with studio and
    teacher(s), even though she's only in one of them.
-3. For each of her rehearsals, list: time, piece, studio, and who else is
-   dancing/coaching in that slot.
-4. Watch for notes like "ab 16:30" or "bis 13:30" - adjust the shown time to
-   reflect her real call time, and note briefly why.
-5. Watch for "ohne [Name]" exclusion notes - if she's excluded, leave the
-   slot out entirely.
-6. Skip days with nothing relevant beyond the two trainings.
-7. Format: "**Day DD.MM**" header per day, then bullet lines. Keep compact.
+2. For each of her rehearsals, list only: time, piece, studio. Do not list
+   who else is dancing, coaching, or which other dancers are excluded/late/
+   early - UNLESS that note directly affects HER call time (e.g. "Fernandez
+   G. bis 13:25" or an "ab HH:MM" note that changes when she personally
+   needs to arrive/can leave).
+3. If a note changes HER OWN call time (e.g. "ab 16:30", "bis 13:30",
+   "Fernandez G. bis 13:25"), adjust the shown time to reflect her real call
+   time and add a brief 2-4 word reason.
+4. If she is explicitly excluded ("ohne Fernandez G." or "ohne [her name]"),
+   leave that slot out entirely.
+5. Skip days with nothing relevant beyond the two trainings.
+6. Format: "**Day DD.MM**" header per day, then bullet lines. Keep compact -
+   this is read on a phone. No extra commentary, no "who's dancing with
+   whom" unless it's her own partner in a named slot.
 
 Output ONLY the digest text, ready to send as-is on WhatsApp. No preamble.
 """
     return base
+
 
 
 def get_gmail_credentials():
