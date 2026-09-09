@@ -335,7 +335,7 @@ def call_claude_transcribe(pdf_bytes: bytes) -> str:
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=4000,
+        max_tokens=8000,
         messages=[{
             "role": "user",
             "content": [
@@ -400,8 +400,15 @@ def run_weekly():
         return "no new schedule email found", 200
 
     transcript = call_claude_transcribe(pdf_bytes)
+    if len(transcript.strip()) < 100 or "===" not in transcript:
+        return f"transcription failed or too short, not sending. transcript was: {transcript[:500]}", 500
+
     cast_list_pdfs = find_cast_list_pdf()
     digest = call_claude_digest(transcript, cast_list_pdfs)
+
+    if digest.lower().startswith(("there is no", "i cannot", "i can't", "no weekly")):
+        return f"digest looked like an error, not sending: {digest[:500]}", 500
+
     send_whatsapp(digest)
     mark_as_processed(message_id)
     return "sent", 200
