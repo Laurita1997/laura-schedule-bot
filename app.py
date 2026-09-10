@@ -140,7 +140,15 @@ SCHEDULE_TOOL = {
                                     "piece": {"type": "string"},
                                     "dancers": {"type": "string"},
                                     "staff": {"type": "string"},
-                                    "notes": {"type": "string"},
+                                    "notes": {
+                                        "type": "string",
+                                        "description": (
+                                            "ALL visible exception/restriction/note lines that belong "
+                                            "to this exact timed block, including multiple red/italic "
+                                            "lines. Join multiple note lines with ' | '. Never stop "
+                                            "after the first note line."
+                                        ),
+                                    },
                                 },
                                 "required": [
                                     "studio",
@@ -258,6 +266,23 @@ n. Mög.
 performance-cast restrictions
 personal dancer time restrictions
 
+IMPORTANT: A single rehearsal can have SEVERAL separate note lines.
+After extracting the title, dancer call and staff for a timed block, scan the
+ENTIRE remaining vertical area of that same block/column until the next timed
+entry or major horizontal divider. Copy EVERY visible exception/restriction
+line that belongs to that block into "notes". This especially includes red
+or italic lines. Never stop after the first note line. Join multiple note
+lines with " | ".
+
+Example pattern:
+Res. n. Mög.
+Bes. Galagesellschaft ab 13:35
+Fernandez G., Mitsumori bis 13:25
+
+If all three lines are visibly inside the same rehearsal block, notes MUST
+contain all three lines. Do not discard the personal "bis" line just because
+an earlier "Bes. ... ab ..." line was already captured.
+
 13. TRAINING STAFF IS MANDATORY.
 For every Training block, copy the teacher/pianist line printed directly
 under the Training title into "staff".
@@ -288,7 +313,8 @@ correct end
 correct activity
 correct dancer call
 correct staff
-correct notes
+ALL note lines from the full height of that block were copied
+no second/third red or italic note line was skipped
 nothing copied from neighboring columns
 
 Then call submit_schedule exactly once with the COMPLETE schedule.
