@@ -1134,6 +1134,13 @@ def personal_start_note(row, selected_rows_for_day):
     if result:
         return f"ab {result}"
 
+    # If this same rehearsal already has a personal "bis HH:MM" for
+    # Fernandez G., do not attach a generic "ab HH:MM" from a nearby
+    # Besetzung/note. This prevents cases like Thursday Divertimento
+    # showing both "bis 13:25" and an unrelated "ab 13:35".
+    if personal_end_note(row):
+        return None
+
     notes = row.get("notes", "") or ""
 
     match = re.search(
