@@ -272,8 +272,13 @@ restriction for Fernandez G.
 16. If the rehearsal itself says "Fernandez G., Mitsumori bis 13:25",
 preserve that phrase inside that rehearsal.
 
-17. If a field is genuinely empty, use an empty string.
-18. Never invent a time, person, room, note or activity.
+17. "PF" means Probefrei. It is an administrative status, NOT part of a
+    dancer's name. Never append PF to a dancer name unless PF is visibly
+    inside that exact rehearsal block and clearly applies there. Do not
+    copy a nearby PF note into the dancers field.
+
+18. If a field is genuinely empty, use an empty string.
+19. Never invent a time, person, room, note or activity.
 
 FINAL CHECK FOR EACH ROW:
 correct day
@@ -379,6 +384,26 @@ def first_staff_name(staff):
     if not staff:
         return ""
     return staff.split("/")[0].strip()
+
+
+def clean_dancer_display(dancers):
+    """
+    PF = Probefrei. It is an administrative status, not part of a name.
+
+    Claude can occasionally pull a nearby PF note into the dancers field,
+    e.g. "Fernandez G., Mitsumori PF". For the WhatsApp digest we remove
+    standalone PF tokens from the displayed dancer call.
+    """
+    text = (dancers or "").strip()
+    if not text:
+        return ""
+
+    text = re.sub(r"\bPF\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+([,;])", r"\1", text)
+    text = re.sub(r"([,;])\s*([,;])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"[,;]\s*$", "", text)
+    return text.strip()
 
 
 def minutes(time_text):
@@ -1238,7 +1263,9 @@ def format_rehearsal(row, cast_info, selected_rows_for_day):
         f"{piece} – {studio}"
     )
 
-    dancers = (row.get("dancers", "") or "").strip()
+    dancers = clean_dancer_display(
+        row.get("dancers", "")
+    )
 
     if dancers:
         line += f" ({dancers})"
