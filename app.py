@@ -8,7 +8,6 @@ from flask import Flask, request, redirect, session
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
-
 import anthropic
 import requests
 
@@ -28,9 +27,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify"
 ]
 
-_raw_client_config = os.environ.get(
-    "GOOGLE_CLIENT_SECRET_JSON"
-)
+_raw_client_config = os.environ.get("GOOGLE_CLIENT_SECRET_JSON")
 
 CLIENT_CONFIG = (
     json.loads(_raw_client_config)
@@ -38,18 +35,13 @@ CLIENT_CONFIG = (
     else None
 )
 
-REDIRECT_URI = os.environ.get(
-    "REDIRECT_URI"
-)
+REDIRECT_URI = os.environ.get("REDIRECT_URI")
 
 TOKEN_FILE = "gmail_token.json"
 
-
 MY_NAME = "Fernandez G."
 
-SENDER_EMAIL = (
-    "ismenia.keck@wiener-staatsballett.at"
-)
+SENDER_EMAIL = "ismenia.keck@wiener-staatsballett.at"
 
 SCHEDULE_FILENAME_HINT = "ballett-pp"
 
@@ -59,70 +51,53 @@ LABEL_NAME = "ScheduleBotProcessed"
 
 
 # ============================================================
-# CLAUDE STRUCTURED OUTPUT SCHEMAS
+# CLAUDE STRUCTURED OUTPUT
 # ============================================================
 
 SCHEDULE_TOOL = {
     "name": "submit_schedule",
-
-    "description":
-        "Submit the complete extracted weekly ballet schedule.",
-
+    "description": "Submit the complete extracted weekly ballet schedule.",
     "input_schema": {
         "type": "object",
-
         "properties": {
             "days": {
                 "type": "array",
-
                 "items": {
                     "type": "object",
-
                     "properties": {
                         "day": {
                             "type": "string"
                         },
-
                         "date": {
                             "type": "string"
                         },
-
                         "rows": {
                             "type": "array",
-
                             "items": {
                                 "type": "object",
-
                                 "properties": {
                                     "studio": {
                                         "type": "string"
                                     },
-
                                     "start": {
                                         "type": "string"
                                     },
-
                                     "end": {
                                         "type": "string"
                                     },
-
                                     "piece": {
                                         "type": "string"
                                     },
-
                                     "dancers": {
                                         "type": "string"
                                     },
-
                                     "staff": {
                                         "type": "string"
                                     },
-
                                     "notes": {
                                         "type": "string"
                                     }
                                 },
-
                                 "required": [
                                     "studio",
                                     "start",
@@ -135,7 +110,6 @@ SCHEDULE_TOOL = {
                             }
                         }
                     },
-
                     "required": [
                         "day",
                         "date",
@@ -144,7 +118,6 @@ SCHEDULE_TOOL = {
                 }
             }
         },
-
         "required": [
             "days"
         ]
@@ -154,53 +127,39 @@ SCHEDULE_TOOL = {
 
 CAST_TOOL = {
     "name": "submit_cast_roles",
-
-    "description":
-        "Submit Fernandez G.'s current roles from the current Cast List email.",
-
+    "description": "Submit Fernandez G.'s current roles.",
     "input_schema": {
         "type": "object",
-
         "properties": {
             "ballets": {
                 "type": "array",
-
                 "items": {
                     "type": "object",
-
                     "properties": {
                         "ballet": {
                             "type": "string"
                         },
-
                         "schedule_names": {
                             "type": "array",
-
                             "items": {
                                 "type": "string"
                             }
                         },
-
                         "roles": {
                             "type": "array",
-
                             "items": {
                                 "type": "object",
-
                                 "properties": {
                                     "role": {
                                         "type": "string"
                                     },
-
                                     "category": {
                                         "type": "string"
                                     },
-
                                     "reserve": {
                                         "type": "boolean"
                                     }
                                 },
-
                                 "required": [
                                     "role",
                                     "category",
@@ -209,7 +168,6 @@ CAST_TOOL = {
                             }
                         }
                     },
-
                     "required": [
                         "ballet",
                         "schedule_names",
@@ -218,7 +176,6 @@ CAST_TOOL = {
                 }
             }
         },
-
         "required": [
             "ballets"
         ]
@@ -233,100 +190,137 @@ CAST_TOOL = {
 SCHEDULE_PROMPT = """
 Read the attached Wiener Staatsballett weekly rehearsal schedule PDF.
 
-The PDF is a VISUAL TABLE.
+The PDF is a VISUAL TABLE with normally one page per day.
 
-There is normally one page per day.
-
-Each page contains several vertical columns such as:
-
-- Ballettsaal 1
-- Ballettsaal 2
-- Ballettsaal 3 / BS3
-- BAK / Anproben
-- div. Orte
-- Gäste
-- Sonstiges
-
-Your ONLY task is to extract what is printed.
+Your ONLY task is extraction.
 
 Do NOT decide whether Fernandez G. participates.
 
-CRITICAL VISUAL RULES:
+IMPORTANT VISUAL RULES:
 
 1. Process ONE PAGE AT A TIME.
 
-2. Inside each page, process ONE COLUMN AT A TIME from TOP TO BOTTOM.
+2. Process ONE COLUMN AT A TIME from TOP TO BOTTOM.
 
 3. NEVER combine information from different columns.
 
-4. One output row must represent ONE visually continuous timed block.
+4. One output row must correspond to ONE visually continuous timed block.
 
-5. start, end, piece, dancers, staff and notes must belong to that SAME
-   visual block.
+5. studio, start, end, piece, dancers, staff and notes must all come
+   from the SAME visual block.
 
-6. Extract normal Training as well as rehearsals.
+6. Never move text horizontally from a neighboring column into another
+   rehearsal.
 
-7. Also inspect side columns carefully.
+7. Carefully distinguish:
+   - dancer names
+   - staff / teacher / pianist names
+   - notes
+   - Sonstiges
+   - Gäste
+   - side-room information
 
-8. If a named room is printed, preserve that actual room, for example:
+8. Extract normal Training and all rehearsal blocks.
 
-   Hilverdingsaal
-   Wiesenthalsaal
-   Elsslersaal
-   Hankasaal
+9. Side rooms are important.
 
-9. Normalize:
+If a room such as one of these is printed directly above a block:
 
-   Ballettsaal 1 -> BS1
-   Ballettsaal 2 -> BS2
-   Ballettsaal 3 -> BS3
+Hilverdingsaal
+Wiesenthalsaal
+Elsslersaal
+Hankasaal
 
-10. Preserve dancer calls faithfully, including:
+use that named room as studio.
 
-    Entire Cast
-    Alle Solo Damen & Herren
-    Alle Solodamen & Herren verfügbar
-    Solo Dame
-    Solo Damen & Herren
-    all available Solo Da. & Herr.
-    fixed lists of dancer names
-    Variation numbers
-    headcount groups such as 6 Damen & 6 Herren
+10. Normalize:
 
-11. Preserve important notes exactly, including:
+Ballettsaal 1 -> BS1
+Ballettsaal 2 -> BS2
+Ballettsaal 3 -> BS3
 
-    ohne ...
-    Bes. dates
-    ab HH:MM
-    bis HH:MM
-    n. Mög.
-    Fernandez G. bis HH:MM
-    performance cast information
+11. Preserve dancer calls faithfully, including:
 
-12. If a field is empty, use an empty string.
+Entire Cast
+Alle Solo Damen & Herren
+Alle Solodamen & Herren verfügbar
+Solo Dame
+Solo Damen & Herren
+all available Solo Da. & Herr.
+specific dancer names
+Variation numbers
+headcount groups
 
-13. Never invent a time.
+12. Preserve notes faithfully, including:
 
-14. Never invent a room.
+ohne ...
+Bes. dates
+ab HH:MM
+bis HH:MM
+n. Mög.
+performance cast restrictions
+personal dancer time restrictions
 
-15. Never attach a time from one column to an activity in another column.
+13. IMPORTANT FOR TRAINING:
 
-16. Side rooms are especially important. If Hilverdingsaal is printed above
-    a rehearsal in a side column, that rehearsal must have
-    studio="Hilverdingsaal".
+For every Training block, the teacher/pianist line printed directly
+underneath the Training title is MANDATORY.
 
-FINAL CHECK:
+Never leave staff empty when teacher/pianist names are visibly printed.
 
-For every extracted row verify:
+Examples:
+
+Training Blue Group
+Gomes / Takizawa
+
+must produce:
+
+staff = "Gomes / Takizawa"
+
+Training Purple Group
+Rachedi / Zapravdin
+
+must produce:
+
+staff = "Rachedi / Zapravdin"
+
+14. Do NOT put names from Gäste or Sonstiges into a rehearsal's dancers,
+staff or notes unless those names are visibly inside that same rehearsal
+block.
+
+15. A note such as:
+
+SU Alosa bis 15:00
+
+in Sonstiges is NOT a personal time restriction for Fernandez G.
+
+16. A note such as:
+
+PF Papava
+
+in Sonstiges is NOT part of a nearby Rhapsody dancer list.
+
+17. If the schedule actually says:
+
+Fernandez G., Mitsumori bis 13:25
+
+inside a rehearsal block, preserve the whole phrase within that same
+rehearsal.
+
+18. If a field is empty, return an empty string.
+
+19. Never invent a time, dancer, room, staff member or note.
+
+FINAL CHECK FOR EVERY ROW:
 
 - correct day
 - correct room
-- correct start
-- correct end
+- correct time
 - correct activity
-- correct dancer call
+- correct dancers
 - correct staff
 - correct notes
+- nothing copied from neighboring columns
 
 Then call submit_schedule exactly once with the COMPLETE schedule.
 """
@@ -335,50 +329,42 @@ Then call submit_schedule exactly once with the COMPLETE schedule.
 CAST_PROMPT = f"""
 Read all attached Wiener Staatsballett Cast List PDFs.
 
-These PDFs all belong to ONE current Cast List email.
+All PDFs belong to ONE current Cast List email.
 
-Therefore ALL attached PDFs are currently relevant.
+Therefore every attached PDF is currently relevant.
 
-Find every ballet in which:
+Find every ballet where:
 
 {MY_NAME}
 
 appears.
 
-For each ballet:
+For every relevant ballet:
 
-1. Identify the ballet title.
+1. Identify the exact ballet title.
 
-2. Return schedule_names containing the normal shortened names that can
-   appear in the weekly rehearsal schedule.
+2. Return useful schedule_names.
 
 Example:
 
-ballet:
 Divertimento No. 15
 
 schedule_names:
 ["Divertimento", "Divertimento No. 15"]
 
-Example:
-
-ballet:
 Rhapsody
 
 schedule_names:
 ["Rhapsody"]
 
-Example:
-
-ballet:
 Nijinsky
 
 schedule_names:
 ["Nijinsky"]
 
-3. Find every role belonging to Fernandez G.
+3. Find EVERY printed role belonging to Fernandez G.
 
-4. Determine the category from the VISUAL hierarchy.
+4. Use the visual hierarchy of the cast table.
 
 Example:
 
@@ -391,34 +377,36 @@ means:
 role = "Variation 6"
 category = "Solo Dame"
 
-If the table itself says:
+If the table says:
 
 Solo Dame
-Trenary / Fernandez G. / Fernandes
+Trenary | Fernandez G. | Fernandes
 
 then:
 
 role = "Solo Dame"
 category = "Solo Dame"
 
-If underneath Solo Herren:
+5. If underneath Solo Herren:
 
 category = "Solo Herr"
 
-If it is a named character:
+6. Named character:
 
 category = "Named Role"
 
-If it is an ensemble role:
+7. Group role:
 
 category = "Group/Ensemble"
 
-5. reserve=true only if Fernandez G. is explicitly a reserve or cover
-   for that role.
+8. reserve=true only if Fernandez G. is explicitly Reserve/Cover.
 
-6. Ignore ballets where Fernandez G. does not appear.
+9. If Fernandez G. appears in multiple different role labels in the same
+ballet, return all of them.
 
-7. Do not invent roles.
+10. Ignore ballets where Fernandez G. does not appear.
+
+11. Do not invent roles.
 
 Then call submit_cast_roles exactly once.
 """
@@ -429,38 +417,19 @@ Then call submit_cast_roles exactly once.
 # ============================================================
 
 def walk_parts(part):
-
     yield part
 
-    for child in part.get(
-        "parts",
-        []
-    ):
-        yield from walk_parts(
-            child
-        )
+    for child in part.get("parts", []):
+        yield from walk_parts(child)
 
 
 def decode_gmail_data(data):
-
-    padded = (
-        data
-        + "=" * (
-            -len(data) % 4
-        )
-    )
-
-    return base64.urlsafe_b64decode(
-        padded
-    )
+    padded = data + "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(padded)
 
 
 def norm(text):
-
-    text = (
-        text
-        or ""
-    ).lower()
+    text = (text or "").lower()
 
     text = (
         text
@@ -482,94 +451,57 @@ def norm(text):
 
 
 def normalize_studio(studio):
+    value = (studio or "").strip()
+    n = norm(value)
 
-    value = (
-        studio
-        or ""
-    ).strip()
-
-    n = norm(
-        value
-    )
-
-    if (
-        "ballettsaal 1" in n
-        or n == "bs1"
-    ):
+    if "ballettsaal 1" in n or n == "bs1":
         return "BS1"
 
-    if (
-        "ballettsaal 2" in n
-        or n == "bs2"
-    ):
+    if "ballettsaal 2" in n or n == "bs2":
         return "BS2"
 
-    if (
-        "ballettsaal 3" in n
-        or n == "bs3"
-    ):
+    if "ballettsaal 3" in n or n == "bs3":
         return "BS3"
 
     return value
 
 
 def first_staff_name(staff):
-
-    staff = (
-        staff
-        or ""
-    ).strip()
+    staff = (staff or "").strip()
 
     if not staff:
         return ""
 
-    return (
-        staff
-        .split("/")[0]
-        .strip()
-    )
+    return staff.split("/")[0].strip()
 
 
 def minutes(time_text):
-
     try:
-
         hour, minute = map(
             int,
             time_text.split(":")
         )
 
-        return (
-            hour * 60
-            + minute
-        )
+        return hour * 60 + minute
 
     except Exception:
-
         return 99999
 
 
 def short_day(day):
-
     mapping = {
         "montag": "Mo",
         "mo": "Mo",
-
         "dienstag": "Di",
         "di": "Di",
-
         "mittwoch": "Mi",
         "mi": "Mi",
-
         "donnerstag": "Do",
         "do": "Do",
-
         "freitag": "Fr",
         "fr": "Fr",
-
         "samstag": "Sa",
         "sa": "Sa",
-
         "sonntag": "So",
         "so": "So"
     }
@@ -580,12 +512,34 @@ def short_day(day):
     )
 
 
+def short_date(date):
+    """
+    07.09.2026 -> 07.09
+    07.09 -> 07.09
+    """
+
+    if not date:
+        return ""
+
+    match = re.search(
+        r"(\d{1,2})\.(\d{1,2})",
+        date
+    )
+
+    if not match:
+        return date
+
+    return (
+        f"{int(match.group(1)):02d}."
+        f"{int(match.group(2)):02d}"
+    )
+
+
 # ============================================================
 # GMAIL AUTH
 # ============================================================
 
 def get_gmail_credentials():
-
     env_token = os.environ.get(
         "GMAIL_TOKEN_JSON"
     )
@@ -593,18 +547,13 @@ def get_gmail_credentials():
     creds = None
 
     if env_token:
-
         try:
-
             creds = Credentials.from_authorized_user_info(
-                json.loads(
-                    env_token
-                ),
+                json.loads(env_token),
                 SCOPES
             )
 
         except Exception as exc:
-
             print(
                 "Could not read GMAIL_TOKEN_JSON:",
                 repr(exc)
@@ -612,11 +561,8 @@ def get_gmail_credentials():
 
     if (
         creds is None
-        and os.path.exists(
-            TOKEN_FILE
-        )
+        and os.path.exists(TOKEN_FILE)
     ):
-
         creds = Credentials.from_authorized_user_file(
             TOKEN_FILE,
             SCOPES
@@ -627,36 +573,31 @@ def get_gmail_credentials():
         and creds.expired
         and creds.refresh_token
     ):
-
         creds.refresh(
             GoogleAuthRequest()
         )
 
         try:
-
             with open(
                 TOKEN_FILE,
                 "w"
             ) as file:
-
                 file.write(
                     creds.to_json()
                 )
 
         except Exception:
-
             pass
 
     return creds
 
 
 # ============================================================
-# HOME
+# HOME / PING
 # ============================================================
 
 @app.route("/")
 def home():
-
     creds = get_gmail_credentials()
 
     gmail_status = (
@@ -673,18 +614,24 @@ def home():
     )
 
 
+@app.route("/ping")
+def ping():
+    if (
+        request.args.get("secret")
+        != os.environ.get("CRON_SECRET")
+    ):
+        return "unauthorized", 401
+
+    return "✅ Schedule Bot is alive", 200
+
+
 # ============================================================
 # GOOGLE AUTH
 # ============================================================
 
 @app.route("/auth")
 def auth():
-
-    if (
-        not CLIENT_CONFIG
-        or not REDIRECT_URI
-    ):
-
+    if not CLIENT_CONFIG or not REDIRECT_URI:
         return (
             "Missing GOOGLE_CLIENT_SECRET_JSON or REDIRECT_URI",
             500
@@ -696,27 +643,19 @@ def auth():
         redirect_uri=REDIRECT_URI
     )
 
-    auth_url, state = (
-        flow.authorization_url(
-            access_type="offline",
-            prompt="consent"
-        )
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        prompt="consent"
     )
 
-    session[
-        "state"
-    ] = state
+    session["state"] = state
 
-    return redirect(
-        auth_url
-    )
+    return redirect(auth_url)
 
 
 @app.route("/oauth2callback")
 def oauth2callback():
-
     if "state" not in session:
-
         return (
             "OAuth state missing. Start again from /auth.",
             400
@@ -733,22 +672,14 @@ def oauth2callback():
         authorization_response=request.url
     )
 
-    creds = (
-        flow.credentials
-    )
-
-    token_json = (
-        creds.to_json()
-    )
+    creds = flow.credentials
+    token_json = creds.to_json()
 
     with open(
         TOKEN_FILE,
         "w"
     ) as file:
-
-        file.write(
-            token_json
-        )
+        file.write(token_json)
 
     return (
         "Gmail connected 🎉<br><br>"
@@ -764,33 +695,18 @@ def oauth2callback():
 # ============================================================
 
 def get_or_create_label(service):
-
     labels = (
         service
         .users()
         .labels()
-        .list(
-            userId="me"
-        )
+        .list(userId="me")
         .execute()
-        .get(
-            "labels",
-            []
-        )
+        .get("labels", [])
     )
 
     for label in labels:
-
-        if (
-            label[
-                "name"
-            ]
-            == LABEL_NAME
-        ):
-
-            return label[
-                "id"
-            ]
+        if label["name"] == LABEL_NAME:
+            return label["id"]
 
     new_label = (
         service
@@ -798,33 +714,22 @@ def get_or_create_label(service):
         .labels()
         .create(
             userId="me",
-
             body={
-                "name":
-                    LABEL_NAME,
-
-                "labelListVisibility":
-                    "labelHide",
-
-                "messageListVisibility":
-                    "hide"
+                "name": LABEL_NAME,
+                "labelListVisibility": "labelHide",
+                "messageListVisibility": "hide"
             }
         )
         .execute()
     )
 
-    return new_label[
-        "id"
-    ]
+    return new_label["id"]
 
 
 def mark_as_processed(message_id):
-
     from googleapiclient.discovery import build
 
-    creds = (
-        get_gmail_credentials()
-    )
+    creds = get_gmail_credentials()
 
     service = build(
         "gmail",
@@ -832,10 +737,8 @@ def mark_as_processed(message_id):
         credentials=creds
     )
 
-    label_id = (
-        get_or_create_label(
-            service
-        )
+    label_id = get_or_create_label(
+        service
     )
 
     (
@@ -844,10 +747,7 @@ def mark_as_processed(message_id):
         .messages()
         .modify(
             userId="me",
-
-            id=
-                message_id,
-
+            id=message_id,
             body={
                 "addLabelIds": [
                     label_id
@@ -863,20 +763,12 @@ def mark_as_processed(message_id):
 # ============================================================
 
 def find_latest_schedule_pdf():
-
     from googleapiclient.discovery import build
 
-    creds = (
-        get_gmail_credentials()
-    )
+    creds = get_gmail_credentials()
 
     if not creds:
-
-        return (
-            None,
-            None,
-            None
-        )
+        return None, None, None
 
     service = build(
         "gmail",
@@ -884,9 +776,7 @@ def find_latest_schedule_pdf():
         credentials=creds
     )
 
-    get_or_create_label(
-        service
-    )
+    get_or_create_label(service)
 
     query = (
         f'from:{SENDER_EMAIL} '
@@ -912,29 +802,24 @@ def find_latest_schedule_pdf():
         []
     )
 
-    full_messages = []
+    messages = []
 
     for ref in refs:
-
         msg = (
             service
             .users()
             .messages()
             .get(
                 userId="me",
-                id=ref[
-                    "id"
-                ],
+                id=ref["id"],
                 format="full"
             )
             .execute()
         )
 
-        full_messages.append(
-            msg
-        )
+        messages.append(msg)
 
-    full_messages.sort(
+    messages.sort(
         key=lambda message:
             int(
                 message.get(
@@ -942,49 +827,37 @@ def find_latest_schedule_pdf():
                     "0"
                 )
             ),
-
         reverse=True
     )
 
-    for msg in full_messages:
-
+    for msg in messages:
         for part in walk_parts(
-            msg[
-                "payload"
-            ]
+            msg["payload"]
         ):
-
-            filename = (
-                part.get(
-                    "filename",
-                    ""
-                )
+            filename = part.get(
+                "filename",
+                ""
             )
 
             if not filename.lower().endswith(
                 ".pdf"
             ):
-
                 continue
 
             if (
                 SCHEDULE_FILENAME_HINT
                 not in filename.lower()
             ):
-
                 continue
 
-            body = (
-                part.get(
-                    "body",
-                    {}
-                )
+            body = part.get(
+                "body",
+                {}
             )
 
             if body.get(
                 "attachmentId"
             ):
-
                 attachment = (
                     service
                     .users()
@@ -992,42 +865,24 @@ def find_latest_schedule_pdf():
                     .attachments()
                     .get(
                         userId="me",
-
-                        messageId=
-                            msg[
-                                "id"
-                            ],
-
-                        id=
-                            body[
-                                "attachmentId"
-                            ]
+                        messageId=msg["id"],
+                        id=body["attachmentId"]
                     )
                     .execute()
                 )
 
-                pdf_bytes = (
-                    decode_gmail_data(
-                        attachment[
-                            "data"
-                        ]
-                    )
+                pdf_bytes = decode_gmail_data(
+                    attachment["data"]
                 )
 
             elif body.get(
                 "data"
             ):
-
-                pdf_bytes = (
-                    decode_gmail_data(
-                        body[
-                            "data"
-                        ]
-                    )
+                pdf_bytes = decode_gmail_data(
+                    body["data"]
                 )
 
             else:
-
                 continue
 
             print(
@@ -1037,45 +892,35 @@ def find_latest_schedule_pdf():
 
             return (
                 pdf_bytes,
-                msg[
-                    "id"
-                ],
+                msg["id"],
                 filename
             )
 
     print(
-        "❌ No new weekly Ballett-PP schedule found"
+        "❌ No new Ballett-PP schedule found"
     )
 
-    return (
-        None,
-        None,
-        None
-    )
+    return None, None, None
 
 
 # ============================================================
-# FIND NEWEST CURRENT CAST LIST EMAIL
+# FIND NEWEST CAST LIST EMAIL
 # ============================================================
 
 def find_current_cast_list_pdfs():
     """
     ONLY the newest email from YOU with subject "Cast list" is used.
 
-    ALL PDFs attached to that newest email are the COMPLETE current
-    Cast List set.
+    ALL PDFs in that email = your complete current cast-list set.
 
     Older Cast List emails are ignored.
     """
 
     from googleapiclient.discovery import build
 
-    creds = (
-        get_gmail_credentials()
-    )
+    creds = get_gmail_credentials()
 
     if not creds:
-
         return []
 
     service = build(
@@ -1108,30 +953,24 @@ def find_current_cast_list_pdfs():
     )
 
     if not refs:
-
         return []
 
     messages = []
 
     for ref in refs:
-
         msg = (
             service
             .users()
             .messages()
             .get(
                 userId="me",
-                id=ref[
-                    "id"
-                ],
+                id=ref["id"],
                 format="full"
             )
             .execute()
         )
 
-        messages.append(
-            msg
-        )
+        messages.append(msg)
 
     messages.sort(
         key=lambda message:
@@ -1141,48 +980,34 @@ def find_current_cast_list_pdfs():
                     "0"
                 )
             ),
-
         reverse=True
     )
 
-    newest = (
-        messages[
-            0
-        ]
-    )
+    newest = messages[0]
 
     pdfs = []
 
     for part in walk_parts(
-        newest[
-            "payload"
-        ]
+        newest["payload"]
     ):
-
-        filename = (
-            part.get(
-                "filename",
-                ""
-            )
+        filename = part.get(
+            "filename",
+            ""
         )
 
         if not filename.lower().endswith(
             ".pdf"
         ):
-
             continue
 
-        body = (
-            part.get(
-                "body",
-                {}
-            )
+        body = part.get(
+            "body",
+            {}
         )
 
         if body.get(
             "attachmentId"
         ):
-
             attachment = (
                 service
                 .users()
@@ -1190,51 +1015,30 @@ def find_current_cast_list_pdfs():
                 .attachments()
                 .get(
                     userId="me",
-
-                    messageId=
-                        newest[
-                            "id"
-                        ],
-
-                    id=
-                        body[
-                            "attachmentId"
-                        ]
+                    messageId=newest["id"],
+                    id=body["attachmentId"]
                 )
                 .execute()
             )
 
-            pdf_bytes = (
-                decode_gmail_data(
-                    attachment[
-                        "data"
-                    ]
-                )
+            pdf_bytes = decode_gmail_data(
+                attachment["data"]
             )
 
         elif body.get(
             "data"
         ):
-
-            pdf_bytes = (
-                decode_gmail_data(
-                    body[
-                        "data"
-                    ]
-                )
+            pdf_bytes = decode_gmail_data(
+                body["data"]
             )
 
         else:
-
             continue
 
         pdfs.append(
             {
-                "filename":
-                    filename,
-
-                "bytes":
-                    pdf_bytes
+                "filename": filename,
+                "bytes": pdf_bytes
             }
         )
 
@@ -1243,31 +1047,25 @@ def find_current_cast_list_pdfs():
     )
 
     for item in pdfs:
-
         print(
             "   •",
-            item[
-                "filename"
-            ]
+            item["filename"]
         )
 
     return pdfs
 
 
 # ============================================================
-# CLAUDE READS SCHEDULE
+# CLAUDE: READ SCHEDULE
 # ============================================================
 
 def read_schedule_with_claude(
     pdf_bytes
 ):
-
-    client = (
-        anthropic.Anthropic(
-            api_key=os.environ[
-                "ANTHROPIC_API_KEY"
-            ]
-        )
+    client = anthropic.Anthropic(
+        api_key=os.environ[
+            "ANTHROPIC_API_KEY"
+        ]
     )
 
     pdf_b64 = (
@@ -1275,89 +1073,56 @@ def read_schedule_with_claude(
         .standard_b64encode(
             pdf_bytes
         )
-        .decode(
-            "utf-8"
-        )
+        .decode("utf-8")
     )
 
-    response = (
-        client.messages.create(
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
 
-            model=
-                "claude-sonnet-4-6",
+        max_tokens=16000,
 
-            max_tokens=
-                16000,
+        temperature=0,
 
-            tools=[
-                SCHEDULE_TOOL
-            ],
+        tools=[
+            SCHEDULE_TOOL
+        ],
 
-            tool_choice={
-                "type":
-                    "tool",
+        tool_choice={
+            "type": "tool",
+            "name": "submit_schedule"
+        },
 
-                "name":
-                    "submit_schedule"
-            },
-
-            messages=[
-                {
-                    "role":
-                        "user",
-
-                    "content":
-                    [
-                        {
-                            "type":
-                                "document",
-
-                            "source":
-                            {
-                                "type":
-                                    "base64",
-
-                                "media_type":
-                                    "application/pdf",
-
-                                "data":
-                                    pdf_b64
-                            }
-                        },
-
-                        {
-                            "type":
-                                "text",
-
-                            "text":
-                                SCHEDULE_PROMPT
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": pdf_b64
                         }
-                    ]
-                }
-            ]
-        )
+                    },
+                    {
+                        "type": "text",
+                        "text": SCHEDULE_PROMPT
+                    }
+                ]
+            }
+        ]
     )
 
     for block in response.content:
-
         if (
-            block.type
-            == "tool_use"
-
-            and
-
-            block.name
-            == "submit_schedule"
+            block.type == "tool_use"
+            and block.name == "submit_schedule"
         ):
-
-            data = (
-                block.input
-            )
+            data = block.input
 
             if not data.get(
                 "days"
             ):
-
                 raise ValueError(
                     "Schedule contains no days"
                 )
@@ -1370,133 +1135,90 @@ def read_schedule_with_claude(
 
 
 # ============================================================
-# CLAUDE READS CURRENT CAST LIST
+# CLAUDE: READ CAST LISTS
 # ============================================================
 
 def read_cast_list_with_claude(
     cast_pdfs
 ):
-
     if not cast_pdfs:
-
         return {
             "ballets": []
         }
 
-    client = (
-        anthropic.Anthropic(
-            api_key=os.environ[
-                "ANTHROPIC_API_KEY"
-            ]
-        )
+    client = anthropic.Anthropic(
+        api_key=os.environ[
+            "ANTHROPIC_API_KEY"
+        ]
     )
 
     content = [
         {
-            "type":
-                "text",
-
-            "text":
-                CAST_PROMPT
+            "type": "text",
+            "text": CAST_PROMPT
         }
     ]
 
     for item in cast_pdfs:
-
         content.append(
             {
-                "type":
-                    "text",
-
-                "text":
-                    (
-                        "CAST LIST FILE: "
-                        + item[
-                            "filename"
-                        ]
-                    )
+                "type": "text",
+                "text": (
+                    "CAST LIST FILE: "
+                    + item["filename"]
+                )
             }
         )
 
         pdf_b64 = (
             base64
             .standard_b64encode(
-                item[
-                    "bytes"
-                ]
+                item["bytes"]
             )
-            .decode(
-                "utf-8"
-            )
+            .decode("utf-8")
         )
 
         content.append(
             {
-                "type":
-                    "document",
-
-                "source":
-                {
-                    "type":
-                        "base64",
-
-                    "media_type":
-                        "application/pdf",
-
-                    "data":
-                        pdf_b64
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": pdf_b64
                 }
             }
         )
 
-    response = (
-        client.messages.create(
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
 
-            model=
-                "claude-sonnet-4-6",
+        max_tokens=5000,
 
-            max_tokens=
-                5000,
+        temperature=0,
 
-            tools=[
-                CAST_TOOL
-            ],
+        tools=[
+            CAST_TOOL
+        ],
 
-            tool_choice={
-                "type":
-                    "tool",
+        tool_choice={
+            "type": "tool",
+            "name": "submit_cast_roles"
+        },
 
-                "name":
-                    "submit_cast_roles"
-            },
-
-            messages=[
-                {
-                    "role":
-                        "user",
-
-                    "content":
-                        content
-                }
-            ]
-        )
+        messages=[
+            {
+                "role": "user",
+                "content": content
+            }
+        ]
     )
 
     for block in response.content:
-
         if (
-            block.type
-            == "tool_use"
-
-            and
-
-            block.name
-            == "submit_cast_roles"
+            block.type == "tool_use"
+            and block.name == "submit_cast_roles"
         ):
-
-            data = (
-                block.input
-            )
+            data = block.input
 
             data.setdefault(
                 "ballets",
@@ -1514,10 +1236,7 @@ def read_cast_list_with_claude(
 # TRAINING
 # ============================================================
 
-def is_training(
-    row
-):
-
+def is_training(row):
     piece = norm(
         row.get(
             "piece",
@@ -1525,12 +1244,10 @@ def is_training(
         )
     )
 
-    studio = (
-        normalize_studio(
-            row.get(
-                "studio",
-                ""
-            )
+    studio = normalize_studio(
+        row.get(
+            "studio",
+            ""
         )
     )
 
@@ -1538,69 +1255,53 @@ def is_training(
         "BS1",
         "BS2"
     }:
-
         return False
 
     if "training" not in piece:
-
         return False
 
     if "reha" in piece:
-
         return False
 
     if re.search(
         r"\bjk\b",
         piece
     ):
-
         return False
 
     return True
 
 
-def is_voluntary(
-    row
-):
-
-    combined = norm(
+def is_voluntary(row):
+    text = norm(
         f"{row.get('piece', '')} "
+        f"{row.get('dancers', '')} "
         f"{row.get('notes', '')}"
     )
 
     return (
-        "freiw"
-        in combined
-
-        or
-
-        "freiwillig"
-        in combined
+        "freiw" in text
+        or "freiwillig" in text
     )
 
 
 # ============================================================
-# MATCH SCHEDULE PIECE TO CURRENT CAST LIST
+# FIND BALLET
 # ============================================================
 
 def find_ballet(
     piece,
     cast_info
 ):
-
-    piece_n = norm(
-        piece
-    )
+    piece_n = norm(piece)
 
     if not piece_n:
-
         return None
 
     for ballet in cast_info.get(
         "ballets",
         []
     ):
-
         names = list(
             ballet.get(
                 "schedule_names",
@@ -1616,20 +1317,15 @@ def find_ballet(
         )
 
         for name in names:
-
-            name_n = norm(
-                name
-            )
+            name_n = norm(name)
 
             if not name_n:
-
                 continue
 
             if (
                 name_n in piece_n
                 or piece_n in name_n
             ):
-
                 return ballet
 
     return None
@@ -1643,7 +1339,6 @@ def has_category(
     ballet,
     category
 ):
-
     wanted = norm(
         category
     )
@@ -1652,14 +1347,12 @@ def has_category(
         "roles",
         []
     ):
-
         if norm(
             role.get(
                 "category",
                 ""
             )
         ) == wanted:
-
             return True
 
     return False
@@ -1669,16 +1362,12 @@ def role_is_called(
     ballet,
     text
 ):
-
-    text_n = norm(
-        text
-    )
+    text_n = norm(text)
 
     for role in ballet.get(
         "roles",
         []
     ):
-
         role_name = norm(
             role.get(
                 "role",
@@ -1687,20 +1376,15 @@ def role_is_called(
         )
 
         if not role_name:
-
             continue
-
-        # Generic Solo Dame is handled separately.
 
         if role_name in {
             "solo dame",
             "solo herr"
         }:
-
             continue
 
         if role_name in text_n:
-
             return True
 
     return False
@@ -1709,279 +1393,313 @@ def role_is_called(
 def performance_cast_restriction(
     text
 ):
-
     return bool(
         re.search(
             r"\bbes\.\s*\d{1,2}\.\d{1,2}",
-
-            text
-            or "",
-
-            flags=
-                re.IGNORECASE
+            text or "",
+            flags=re.IGNORECASE
         )
     )
 
 
 # ============================================================
-# DOES THIS REHEARSAL BELONG TO LAURA?
+# DOES ROW BELONG TO LAURA?
 # ============================================================
 
 def belongs_to_me(
     row,
     cast_info
 ):
-
-    # Normal company training
-
-    if is_training(
-        row
-    ):
-
+    # Normal class
+    if is_training(row):
         return True
 
-
-    piece = (
-        row.get(
-            "piece",
-            ""
-        )
+    piece = row.get(
+        "piece",
+        ""
     )
 
-    dancers = (
+    dancers = row.get(
+        "dancers",
+        ""
+    )
+
+    notes = row.get(
+        "notes",
+        ""
+    )
+
+    ballet = find_ballet(
+        piece,
+        cast_info
+    )
+
+    if ballet is None:
+        return False
+
+    piece_n = norm(piece)
+    dancers_n = norm(dancers)
+    notes_n = norm(notes)
+
+    # --------------------------------------------------------
+    # EXPLICIT EXCLUSION
+    # --------------------------------------------------------
+
+    if (
+        "ohne fernandez g."
+        in dancers_n
+        or
+        "ohne fernandez g."
+        in notes_n
+    ):
+        return False
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Her name only proves participation if it is in DANCERS.
+    #
+    # A Claude extraction mistake that puts her name in an
+    # unrelated note must NOT make the rehearsal hers.
+    # --------------------------------------------------------
+
+    if "fernandez g." in dancers_n:
+        return True
+
+    # --------------------------------------------------------
+    # ENTIRE CAST
+    # --------------------------------------------------------
+
+    if (
+        "entire cast" in dancers_n
+        or
+        "entire cast" in piece_n
+    ):
+        return True
+
+    # --------------------------------------------------------
+    # PERFORMANCE-SPECIFIC CAST
+    # --------------------------------------------------------
+
+    if performance_cast_restriction(
+        f"{dancers} {notes}"
+    ):
+        return False
+
+    # --------------------------------------------------------
+    # GENERIC SOLO DAME CALL
+    # --------------------------------------------------------
+
+    solo_dame_call = (
+        "solo dame" in dancers_n
+        or
+        "solodame" in dancers_n
+        or
+        "solo da." in dancers_n
+        or
+        "solo da " in dancers_n
+    )
+
+    if (
+        solo_dame_call
+        and
+        has_category(
+            ballet,
+            "Solo Dame"
+        )
+    ):
+        return True
+
+    # --------------------------------------------------------
+    # EXACT ROLE / VARIATION
+    # --------------------------------------------------------
+
+    if role_is_called(
+        ballet,
+        f"{piece} {dancers}"
+    ):
+        return True
+
+    # Named list without Fernandez G.
+    return False
+
+
+# ============================================================
+# SAFE PERSONAL "BIS" DETECTION
+# ============================================================
+
+def personal_bis_from_field(
+    field
+):
+    """
+    IMPORTANT:
+
+    Fernandez G. and "bis HH:MM" must be in the SAME FIELD.
+
+    This prevents:
+
+    dancers = Fernandez G., Mitsumori
+    notes = SU Alosa bis 15:00
+
+    from being interpreted as:
+    Fernandez G. bis 15:00
+    """
+
+    field = field or ""
+
+    if not re.search(
+        r"Fernandez\s+G\.",
+        field,
+        flags=re.IGNORECASE
+    ):
+        return None
+
+    match = re.search(
+        r"\bbis\s+(\d{1,2}:\d{2})",
+        field,
+        flags=re.IGNORECASE
+    )
+
+    if not match:
+        return None
+
+    return match.group(1)
+
+
+def personal_end_time(row):
+    # First check dancers field itself.
+    result = personal_bis_from_field(
         row.get(
             "dancers",
             ""
         )
     )
 
-    notes = (
+    if result:
+        return result
+
+    # Then check notes field itself.
+    result = personal_bis_from_field(
         row.get(
             "notes",
             ""
         )
     )
 
+    if result:
+        return result
 
-    # Ballet must exist in CURRENT Cast List email
-
-    ballet = (
-        find_ballet(
-            piece,
-            cast_info
-        )
-    )
-
-    if ballet is None:
-
-        return False
-
-
-    piece_n = norm(
-        piece
-    )
-
-    dancers_n = norm(
-        dancers
-    )
-
-    combined = norm(
-        f"{dancers} {notes}"
+    return row.get(
+        "end",
+        ""
     )
 
 
-    # ========================================================
-    # EXPLICIT EXCLUSION
-    # ========================================================
-
-    if (
-        "ohne fernandez g."
-        in combined
-    ):
-
-        return False
-
-
-    # ========================================================
-    # HER NAME IS LITERALLY THERE
-    # ========================================================
-
-    if (
-        "fernandez g."
-        in combined
-    ):
-
-        return True
-
-
-    # ========================================================
-    # ENTIRE CAST
-    # ========================================================
-
-    if (
-        "entire cast"
-        in dancers_n
-
-        or
-
-        "entire cast"
-        in piece_n
-    ):
-
-        return True
-
-
-    # ========================================================
-    # PERFORMANCE-SPECIFIC CAST
-    # ========================================================
-
-    # Example:
-    #
-    # Solo Damen & Herren Bes. 18.09. & 25.09.
-    #
-    # Since Laura is not literally named, exclude.
-    #
-    # Entire Cast was already handled above.
-
-    if performance_cast_restriction(
-        f"{dancers} {notes}"
-    ):
-
-        return False
-
-
-    # ========================================================
-    # GENERIC SOLO DAME CALL
-    # ========================================================
-
-    solo_dame_call = (
-        "solo dame"
-        in dancers_n
-
-        or
-
-        "solodame"
-        in dancers_n
-
-        or
-
-        "solo da."
-        in dancers_n
-
-        or
-
-        "solo da "
-        in dancers_n
-    )
-
-    if (
-        solo_dame_call
-
-        and
-
-        has_category(
-            ballet,
-            "Solo Dame"
-        )
-    ):
-
-        return True
-
-
-    # ========================================================
-    # EXACT ROLE / VARIATION
-    # ========================================================
-
-    if role_is_called(
-        ballet,
-        f"{piece} {dancers}"
-    ):
-
-        return True
-
-
-    # ========================================================
-    # FIXED LIST WITHOUT FERNANDEZ G.
-    # ========================================================
-
-    return False
-
-
-# ============================================================
-# PERSONAL END TIME
-# ============================================================
-
-def personal_end_time(
-    row
-):
-
-    text = (
-        f"{row.get('dancers', '')} "
-        f"{row.get('notes', '')}"
-    )
-
-    match = re.search(
-        r"Fernandez\s+G\..{0,100}?\bbis\s+(\d{1,2}:\d{2})",
-
-        text,
-
-        flags=
-            re.IGNORECASE
-    )
-
-    if match:
-
-        return (
-            match.group(
-                1
-            )
-        )
-
-    return (
+def personal_end_note(row):
+    result = personal_bis_from_field(
         row.get(
-            "end",
+            "dancers",
             ""
         )
     )
 
-
-def personal_end_note(
-    row
-):
-
-    text = (
-        f"{row.get('dancers', '')} "
-        f"{row.get('notes', '')}"
-    )
-
-    match = re.search(
-        r"Fernandez\s+G\..{0,100}?\bbis\s+(\d{1,2}:\d{2})",
-
-        text,
-
-        flags=
-            re.IGNORECASE
-    )
-
-    if match:
-
-        return (
-            f"bis {match.group(1)} "
-            f"für Fernandez G."
+    if not result:
+        result = personal_bis_from_field(
+            row.get(
+                "notes",
+                ""
+            )
         )
 
-    return None
+    if not result:
+        return None
+
+    return (
+        f"bis {result} für Fernandez G."
+    )
 
 
 # ============================================================
-# GENERIC "AB" NOTE
+# SAFE PERSONAL "AB" DETECTION
 # ============================================================
 
-def generic_start_note(
-    row
+def personal_ab_from_field(
+    field
 ):
+    """
+    Explicit:
+    Fernandez G. ... ab 16:30
+    """
 
-    text = (
+    field = field or ""
+
+    if not re.search(
+        r"Fernandez\s+G\.",
+        field,
+        flags=re.IGNORECASE
+    ):
+        return None
+
+    match = re.search(
+        r"\bab\s+(\d{1,2}:\d{2})",
+        field,
+        flags=re.IGNORECASE
+    )
+
+    if not match:
+        return None
+
+    return match.group(1)
+
+
+def personal_start_note(
+    row,
+    selected_rows_for_day
+):
+    # --------------------------------------------------------
+    # Explicit Fernandez G. ab ...
+    # --------------------------------------------------------
+
+    result = personal_ab_from_field(
+        row.get(
+            "dancers",
+            ""
+        )
+    )
+
+    if result:
+        return (
+            f"ab {result}"
+        )
+
+    result = personal_ab_from_field(
+        row.get(
+            "notes",
+            ""
+        )
+    )
+
+    if result:
+        return (
+            f"ab {result}"
+        )
+
+    # --------------------------------------------------------
+    # Generic note:
+    #
+    # Bes. Rhapsody & WTGH ab 16:30
+    #
+    # This can apply when another rehearsal Laura is actually
+    # doing that same day is named in the note.
+    #
+    # But:
+    #
+    # Bes. Galagesellschaft ab 13:35
+    #
+    # should NOT apply unless Galagesellschaft is one of
+    # Laura's selected activities that day.
+    # --------------------------------------------------------
+
+    notes = (
         row.get(
             "notes",
             ""
@@ -1991,48 +1709,65 @@ def generic_start_note(
 
     match = re.search(
         r"\bab\s+(\d{1,2}:\d{2})",
-
-        text,
-
-        flags=
-            re.IGNORECASE
+        notes,
+        flags=re.IGNORECASE
     )
 
-    if match:
+    if not match:
+        return None
 
-        return (
-            f"ab {match.group(1)}"
+    notes_n = norm(notes)
+
+    for other in selected_rows_for_day:
+        if other is row:
+            continue
+
+        other_piece = norm(
+            other.get(
+                "piece",
+                ""
+            )
         )
+
+        if not other_piece:
+            continue
+
+        # Main identifying word, e.g. Rhapsody
+        keyword = (
+            other_piece.split()[0]
+        )
+
+        if (
+            len(keyword) >= 5
+            and keyword in notes_n
+        ):
+            return (
+                f"ab {match.group(1)}"
+            )
 
     return None
 
 
 # ============================================================
-# DISPLAY PIECE NAME
+# DISPLAY PIECE
 # ============================================================
 
 def display_piece(
     row,
     cast_info
 ):
-
-    ballet = (
-        find_ballet(
-            row.get(
-                "piece",
-                ""
-            ),
-            cast_info
-        )
+    ballet = find_ballet(
+        row.get(
+            "piece",
+            ""
+        ),
+        cast_info
     )
 
     if not ballet:
-
-        return (
-            row.get(
-                "piece",
-                ""
-            )
+        return row.get(
+            "piece",
+            ""
         )
 
     ballet_name = norm(
@@ -2042,52 +1777,37 @@ def display_piece(
         )
     )
 
-    if (
-        "divertimento"
-        in ballet_name
-    ):
-
+    if "divertimento" in ballet_name:
         return "Divertimento"
 
-    if (
-        "rhapsody"
-        in ballet_name
-    ):
-
+    if "rhapsody" in ballet_name:
         return "Rhapsody"
 
-    return (
-        ballet.get(
-            "ballet",
-            row.get(
-                "piece",
-                ""
-            )
+    return ballet.get(
+        "ballet",
+        row.get(
+            "piece",
+            ""
         )
     )
 
 
 # ============================================================
-# FORMAT TRAINING
+# TRAINING FORMAT
 # ============================================================
 
 def format_training(
     rows
 ):
-
     rows = sorted(
-
         rows,
-
-        key=lambda row:
-        (
+        key=lambda row: (
             minutes(
                 row.get(
                     "start",
                     ""
                 )
             ),
-
             0
             if normalize_studio(
                 row.get(
@@ -2095,104 +1815,61 @@ def format_training(
                     ""
                 )
             ) == "BS1"
-
             else 1
         )
     )
 
-
     if not rows:
-
         return ""
 
-
-    # ========================================================
-    # TWO TRAINING OPTIONS
-    # ========================================================
-
+    # Two normal options
     if (
-        len(
-            rows
-        )
-        >= 2
-
+        len(rows) >= 2
         and
-
-        rows[0].get(
-            "start"
-        )
+        rows[0].get("start")
         ==
-        rows[1].get(
-            "start"
-        )
-
+        rows[1].get("start")
         and
-
-        rows[0].get(
-            "end"
-        )
+        rows[0].get("end")
         ==
-        rows[1].get(
-            "end"
-        )
+        rows[1].get("end")
     ):
-
-        first = (
-            rows[
-                0
-            ]
-        )
-
-        second = (
-            rows[
-                1
-            ]
-        )
-
+        first = rows[0]
+        second = rows[1]
 
         first_text = (
-            f"{first.get('piece', '')} "
-            f"– "
-            f"{normalize_studio(first.get('studio', ''))}"
+            f"{first.get('piece', '').strip()} "
+            f"– {normalize_studio(first.get('studio', ''))}"
         )
 
-        first_staff = (
-            first_staff_name(
-                first.get(
-                    "staff",
-                    ""
-                )
+        first_staff = first_staff_name(
+            first.get(
+                "staff",
+                ""
             )
         )
 
         if first_staff:
-
             first_text += (
                 f" ({first_staff})"
             )
 
-
         second_text = (
-            f"{second.get('piece', '')} "
-            f"– "
-            f"{normalize_studio(second.get('studio', ''))}"
+            f"{second.get('piece', '').strip()} "
+            f"– {normalize_studio(second.get('studio', ''))}"
         )
 
-        second_staff = (
-            first_staff_name(
-                second.get(
-                    "staff",
-                    ""
-                )
+        second_staff = first_staff_name(
+            second.get(
+                "staff",
+                ""
             )
         )
 
         if second_staff:
-
             second_text += (
                 f" ({second_staff})"
             )
-
 
         return (
             f"• **{first.get('start')}-{first.get('end')}** "
@@ -2201,35 +1878,23 @@ def format_training(
             f"{second_text}"
         )
 
-
-    # ========================================================
-    # ONE TRAINING
-    # ========================================================
-
-    row = (
-        rows[
-            0
-        ]
-    )
+    # One class, e.g. Saturday
+    row = rows[0]
 
     line = (
         f"• **{row.get('start')}-{row.get('end')}** "
-        f"{row.get('piece', '')} "
-        f"– "
-        f"{normalize_studio(row.get('studio', ''))}"
+        f"{row.get('piece', '').strip()} "
+        f"– {normalize_studio(row.get('studio', ''))}"
     )
 
-    staff = (
-        first_staff_name(
-            row.get(
-                "staff",
-                ""
-            )
+    staff = first_staff_name(
+        row.get(
+            "staff",
+            ""
         )
     )
 
     if staff:
-
         line += (
             f" ({staff})"
         )
@@ -2238,37 +1903,30 @@ def format_training(
 
 
 # ============================================================
-# FORMAT REHEARSAL
+# REHEARSAL FORMAT
 # ============================================================
 
 def format_rehearsal(
     row,
-    cast_info
+    cast_info,
+    selected_rows_for_day
 ):
-
-    piece = (
-        display_piece(
-            row,
-            cast_info
-        )
+    piece = display_piece(
+        row,
+        cast_info
     )
 
-    studio = (
-        normalize_studio(
-            row.get(
-                "studio",
-                ""
-            )
+    studio = normalize_studio(
+        row.get(
+            "studio",
+            ""
         )
     )
 
     line = (
         f"• **{row.get('start')}-{row.get('end')}** "
-        f"{piece} "
-        f"– "
-        f"{studio}"
+        f"{piece} – {studio}"
     )
-
 
     dancers = (
         row.get(
@@ -2279,23 +1937,15 @@ def format_rehearsal(
     ).strip()
 
     if dancers:
-
         line += (
             f" ({dancers})"
         )
 
-
-    # ========================================================
+    # --------------------------------------------------------
     # RHAPSODY COACH
-    # ========================================================
+    # --------------------------------------------------------
 
-    if (
-        "rhapsody"
-        in norm(
-            piece
-        )
-    ):
-
+    if "rhapsody" in norm(piece):
         staff = (
             row.get(
                 "staff",
@@ -2304,204 +1954,150 @@ def format_rehearsal(
             or ""
         )
 
+        dancers_n = norm(
+            dancers
+        )
+
+        # If Ferri appears, always show Ferri.
         if re.search(
             r"\bFerri\b",
-
             staff,
-
-            flags=
-                re.IGNORECASE
+            flags=re.IGNORECASE
         ):
+            line += " Ferri"
 
-            line += (
-                " Ferri"
-            )
-
-        else:
-
-            coach = (
-                first_staff_name(
-                    staff
-                )
+        # For Entire Cast Rhapsody, don't clutter with Gomes etc.
+        elif "entire cast" not in dancers_n:
+            coach = first_staff_name(
+                staff
             )
 
             if coach:
-
                 line += (
                     f" {coach}"
                 )
 
+    # --------------------------------------------------------
+    # PERSONAL BIS
+    # --------------------------------------------------------
 
-    # ========================================================
-    # PERSONAL END NOTE
-    # ========================================================
-
-    end_note = (
-        personal_end_note(
-            row
-        )
+    end_note = personal_end_note(
+        row
     )
 
     if end_note:
-
         line += (
             f" – {end_note}"
         )
 
+    # --------------------------------------------------------
+    # PERSONAL / RELEVANT AB
+    # --------------------------------------------------------
 
-    # ========================================================
-    # AB NOTE
-    # ========================================================
-
-    start_note = (
-        generic_start_note(
-            row
-        )
+    start_note = personal_start_note(
+        row,
+        selected_rows_for_day
     )
 
     if start_note:
-
         line += (
             f" – {start_note}"
         )
-
 
     return line
 
 
 # ============================================================
-# DEBUG SELECTED ROWS
+# DEBUG
 # ============================================================
 
 def log_selected_rows(
     schedule,
     cast_info
 ):
-
     print(
         "\n"
-        "================ SELECTED ROW DEBUG ================"
+        "================ SELECTED REHEARSALS ================"
     )
 
     for day in schedule.get(
         "days",
         []
     ):
-
-        day_name = (
-            short_day(
-                day.get(
-                    "day",
-                    ""
-                )
+        day_name = short_day(
+            day.get(
+                "day",
+                ""
             )
         )
 
-        # For now we especially want Tuesday,
-        # because Feierabend currently incorrectly becomes 15:00.
-
-        if day_name != "Di":
-
-            continue
-
         print(
-            "\n"
-            "---------- TUESDAY ----------"
+            f"\n--- {day_name} ---"
         )
 
         for row in day.get(
             "rows",
             []
         ):
-
-            selected = (
-                belongs_to_me(
-                    row,
-                    cast_info
+            if belongs_to_me(
+                row,
+                cast_info
+            ):
+                print(
+                    "✅",
+                    json.dumps(
+                        row,
+                        ensure_ascii=False
+                    )
                 )
-            )
-
-            status = (
-                "✅ SELECTED"
-                if selected
-                else "❌ ignored"
-            )
-
-            print(
-                status,
-                json.dumps(
-                    row,
-                    ensure_ascii=False
-                )
-            )
 
     print(
         "\n"
-        "===================================================="
+        "======================================================"
         "\n"
     )
 
 
 # ============================================================
-# BUILD FINAL DIGEST
+# BUILD WHATSAPP DIGEST
 # ============================================================
 
 def build_digest(
     schedule,
     cast_info
 ):
-
     sections = []
-
     closing_times = []
-
 
     for day in schedule.get(
         "days",
         []
     ):
-
-        rows = (
-            day.get(
-                "rows",
-                []
-            )
+        rows = day.get(
+            "rows",
+            []
         )
-
-
-        # ====================================================
-        # SELECT ONLY LAURA'S ROWS
-        # ====================================================
 
         selected = [
             row
-
-            for row
-            in rows
-
+            for row in rows
             if belongs_to_me(
                 row,
                 cast_info
             )
         ]
 
-
         if not selected:
-
             continue
 
-
         selected.sort(
-
-            key=lambda row:
-            (
+            key=lambda row: (
                 minutes(
                     row.get(
                         "start",
                         ""
                     )
                 ),
-
                 minutes(
                     row.get(
                         "end",
@@ -2511,104 +2107,73 @@ def build_digest(
             )
         )
 
-
         trainings = [
             row
-
-            for row
-            in selected
-
-            if is_training(
-                row
-            )
+            for row in selected
+            if is_training(row)
         ]
-
 
         rehearsals = [
             row
-
-            for row
-            in selected
-
-            if not is_training(
-                row
-            )
+            for row in selected
+            if not is_training(row)
         ]
-
 
         lines = []
 
-
         if trainings:
-
             lines.append(
                 format_training(
                     trainings
                 )
             )
 
-
         for row in rehearsals:
-
             lines.append(
                 format_rehearsal(
                     row,
-                    cast_info
+                    cast_info,
+                    selected
                 )
             )
 
-
-        day_name = (
-            short_day(
-                day.get(
-                    "day",
-                    ""
-                )
+        day_name = short_day(
+            day.get(
+                "day",
+                ""
             )
         )
 
-        date = (
+        date = short_date(
             day.get(
                 "date",
                 ""
             )
         )
 
-
         sections.append(
             f"**{day_name} {date}**"
             + "\n\n"
-            + "\n\n".join(
-                lines
-            )
+            + "\n\n".join(lines)
         )
 
-
-        # ====================================================
+        # ----------------------------------------------------
         # FEIERABEND
-        # ====================================================
+        # ----------------------------------------------------
 
         valid_rows = [
             row
-
-            for row
-            in selected
-
+            for row in selected
             if minutes(
                 personal_end_time(
                     row
                 )
-            )
-            < 99999
+            ) < 99999
         ]
 
-
         if valid_rows:
-
             latest = max(
-
                 valid_rows,
-
                 key=lambda row:
                     minutes(
                         personal_end_time(
@@ -2617,37 +2182,21 @@ def build_digest(
                     )
             )
 
-
-            end = (
-                personal_end_time(
-                    latest
-                )
+            end = personal_end_time(
+                latest
             )
-
 
             only_voluntary = (
-                len(
-                    selected
-                )
-                == 1
-
+                len(selected) == 1
                 and
-
                 is_training(
-                    selected[
-                        0
-                    ]
+                    selected[0]
                 )
-
                 and
-
                 is_voluntary(
-                    selected[
-                        0
-                    ]
+                    selected[0]
                 )
             )
-
 
             suffix = (
                 " (freiwillig)"
@@ -2655,30 +2204,20 @@ def build_digest(
                 else ""
             )
 
-
             closing_times.append(
-                f"{day_name} "
-                f"{end}"
-                f"{suffix}"
+                f"{day_name} {end}{suffix}"
             )
 
-
     if not sections:
-
         return (
             "Keine passenden Proben gefunden."
         )
 
-
-    digest = (
-        "\n\n".join(
-            sections
-        )
+    digest = "\n\n".join(
+        sections
     )
 
-
     if closing_times:
-
         digest += (
             "\n\n"
             "**Feierabend:**\n"
@@ -2686,7 +2225,6 @@ def build_digest(
                 closing_times
             )
         )
-
 
     return digest
 
@@ -2698,25 +2236,18 @@ def build_digest(
 def send_whatsapp(
     message
 ):
-
-    id_instance = (
-        os.environ.get(
-            "GREEN_API_ID_INSTANCE",
-            "710522730585"
-        )
+    id_instance = os.environ.get(
+        "GREEN_API_ID_INSTANCE",
+        "710522730585"
     )
 
-    api_token = (
-        os.environ[
-            "GREEN_API_TOKEN"
-        ]
-    )
+    api_token = os.environ[
+        "GREEN_API_TOKEN"
+    ]
 
-    my_number = (
-        os.environ[
-            "MY_WHATSAPP_NUMBER"
-        ]
-    )
+    my_number = os.environ[
+        "MY_WHATSAPP_NUMBER"
+    ]
 
     chat_id = (
         f"{my_number}@c.us"
@@ -2738,15 +2269,10 @@ def send_whatsapp(
 
     response = requests.post(
         url,
-
         json={
-            "chatId":
-                chat_id,
-
-            "message":
-                message
+            "chatId": chat_id,
+            "message": message
         },
-
         timeout=30
     )
 
@@ -2754,7 +2280,7 @@ def send_whatsapp(
 
 
 # ============================================================
-# HTML PREVIEW FOR DRY RUN
+# DRY PREVIEW PAGE
 # ============================================================
 
 def dry_preview_page(
@@ -2762,58 +2288,38 @@ def dry_preview_page(
     schedule_filename,
     cast_pdfs
 ):
-
-    escaped_digest = (
-        html.escape(
-            digest
-        )
+    escaped_digest = html.escape(
+        digest
     )
 
-    cast_names = (
-        "\n".join(
-            item[
-                "filename"
-            ]
-
-            for item
-            in cast_pdfs
-        )
+    escaped_schedule = html.escape(
+        schedule_filename or ""
     )
 
-    escaped_cast_names = (
-        html.escape(
-            cast_names
-        )
+    cast_names = "\n".join(
+        item["filename"]
+        for item in cast_pdfs
     )
 
-    escaped_schedule = (
-        html.escape(
-            schedule_filename
-            or ""
-        )
+    escaped_cast_names = html.escape(
+        cast_names
     )
-
 
     return f"""
     <!doctype html>
-
     <html>
-
     <head>
-
         <meta name="viewport"
               content="width=device-width, initial-scale=1">
-
         <title>Schedule Preview</title>
-
     </head>
 
     <body style="
-        font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif;
-        padding: 24px;
-        line-height: 1.5;
-        max-width: 800px;
-        margin: auto;
+        font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;
+        padding:24px;
+        line-height:1.5;
+        max-width:800px;
+        margin:auto;
     ">
 
         <h2>Schedule Bot Preview 💃</h2>
@@ -2828,10 +2334,10 @@ def dry_preview_page(
         </p>
 
         <pre style="
-            white-space: pre-wrap;
-            background: #f5f5f5;
-            padding: 12px;
-            border-radius: 10px;
+            white-space:pre-wrap;
+            background:#f5f5f5;
+            padding:12px;
+            border-radius:10px;
         ">{escaped_cast_names}</pre>
 
         <hr>
@@ -2839,12 +2345,12 @@ def dry_preview_page(
         <h3>WhatsApp Preview</h3>
 
         <pre style="
-            white-space: pre-wrap;
-            font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif;
-            font-size: 16px;
-            background: #f5f5f5;
-            padding: 16px;
-            border-radius: 12px;
+            white-space:pre-wrap;
+            font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;
+            font-size:16px;
+            background:#f5f5f5;
+            padding:16px;
+            border-radius:12px;
         ">{escaped_digest}</pre>
 
         <p>
@@ -2854,7 +2360,6 @@ def dry_preview_page(
         </p>
 
     </body>
-
     </html>
     """
 
@@ -2871,7 +2376,6 @@ def dry_preview_page(
     ]
 )
 def run_weekly():
-
     if (
         request.args.get(
             "secret"
@@ -2880,12 +2384,10 @@ def run_weekly():
             "CRON_SECRET"
         )
     ):
-
         return (
             "unauthorized",
             401
         )
-
 
     dry_run = (
         request.args.get(
@@ -2894,51 +2396,41 @@ def run_weekly():
         == "1"
     )
 
-
-    # ========================================================
-    # 1. FIND WEEKLY SCHEDULE
-    # ========================================================
+    # --------------------------------------------------------
+    # 1. WEEKLY SCHEDULE
+    # --------------------------------------------------------
 
     (
         schedule_pdf,
         message_id,
         schedule_filename
-    ) = (
-        find_latest_schedule_pdf()
-    )
-
+    ) = find_latest_schedule_pdf()
 
     if not schedule_pdf:
-
         return (
             "no new weekly schedule found",
             200
         )
 
-
-    # ========================================================
-    # 2. FIND CURRENT CAST LIST EMAIL
-    # ========================================================
+    # --------------------------------------------------------
+    # 2. CURRENT CAST LIST EMAIL
+    # --------------------------------------------------------
 
     cast_pdfs = (
         find_current_cast_list_pdfs()
     )
 
-
     if not cast_pdfs:
-
         return (
             "No current Cast List email found. Not sending.",
             500
         )
 
-
-    # ========================================================
-    # 3. CLAUDE READS SCHEDULE
-    # ========================================================
+    # --------------------------------------------------------
+    # 3. READ SCHEDULE
+    # --------------------------------------------------------
 
     try:
-
         schedule = (
             read_schedule_with_claude(
                 schedule_pdf
@@ -2950,12 +2442,9 @@ def run_weekly():
         )
 
     except Exception as exc:
-
         print(
             "❌ Schedule extraction failed:",
-            repr(
-                exc
-            )
+            repr(exc)
         )
 
         return (
@@ -2963,13 +2452,11 @@ def run_weekly():
             500
         )
 
-
-    # ========================================================
-    # 4. CLAUDE READS CAST LIST
-    # ========================================================
+    # --------------------------------------------------------
+    # 4. READ CURRENT CAST LIST
+    # --------------------------------------------------------
 
     try:
-
         cast_info = (
             read_cast_list_with_claude(
                 cast_pdfs
@@ -2981,12 +2468,9 @@ def run_weekly():
         )
 
     except Exception as exc:
-
         print(
             "❌ Cast extraction failed:",
-            repr(
-                exc
-            )
+            repr(exc)
         )
 
         return (
@@ -2994,32 +2478,23 @@ def run_weekly():
             500
         )
 
-
-    # ========================================================
-    # DEBUG TUESDAY
-    # ========================================================
+    # --------------------------------------------------------
+    # 5. DEBUG SELECTED ROWS
+    # --------------------------------------------------------
 
     log_selected_rows(
         schedule,
         cast_info
     )
 
+    # --------------------------------------------------------
+    # 6. BUILD FINAL MESSAGE
+    # --------------------------------------------------------
 
-    # ========================================================
-    # 5. PYTHON BUILDS DIGEST
-    # ========================================================
-
-    digest = (
-        build_digest(
-            schedule,
-            cast_info
-        )
+    digest = build_digest(
+        schedule,
+        cast_info
     )
-
-
-    # ========================================================
-    # LOG CURRENT ROLES
-    # ========================================================
 
     print(
         "\n"
@@ -3034,7 +2509,6 @@ def run_weekly():
             indent=2
         )
     )
-
 
     print(
         "\n"
@@ -3052,13 +2526,11 @@ def run_weekly():
         "\n"
     )
 
-
-    # ========================================================
-    # 6. SAFE DRY RUN
-    # ========================================================
+    # --------------------------------------------------------
+    # SAFE TEST
+    # --------------------------------------------------------
 
     if dry_run:
-
         return (
             dry_preview_page(
                 digest,
@@ -3072,24 +2544,19 @@ def run_weekly():
             }
         )
 
-
-    # ========================================================
-    # 7. SEND WHATSAPP
-    # ========================================================
+    # --------------------------------------------------------
+    # SEND WHATSAPP
+    # --------------------------------------------------------
 
     try:
-
         send_whatsapp(
             digest
         )
 
     except Exception as exc:
-
         print(
             "❌ WhatsApp failed:",
-            repr(
-                exc
-            )
+            repr(exc)
         )
 
         return (
@@ -3097,20 +2564,14 @@ def run_weekly():
             500
         )
 
-
-    # ========================================================
-    # 8. MARK SCHEDULE EMAIL PROCESSED
-    # ========================================================
-
+    # Only mark processed AFTER successful WhatsApp.
     mark_as_processed(
         message_id
     )
 
-
     print(
         "✅ WhatsApp sent and schedule marked processed"
     )
-
 
     return (
         "sent",
@@ -3129,7 +2590,6 @@ def run_weekly():
     ]
 )
 def test_whatsapp():
-
     if (
         request.args.get(
             "secret"
@@ -3138,17 +2598,14 @@ def test_whatsapp():
             "CRON_SECRET"
         )
     ):
-
         return (
             "unauthorized",
             401
         )
 
-
     send_whatsapp(
         "Test-Nachricht vom Schedule Bot 🎉"
     )
-
 
     return (
         "test sent",
@@ -3157,14 +2614,12 @@ def test_whatsapp():
 
 
 # ============================================================
-# START APP
+# START
 # ============================================================
 
 if __name__ == "__main__":
-
     app.run(
         host="0.0.0.0",
-
         port=int(
             os.environ.get(
                 "PORT",
