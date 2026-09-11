@@ -37,6 +37,7 @@ SENDER_EMAIL = "ismenia.keck@wiener-staatsballett.at"
 SCHEDULE_FILENAME_HINT = "ballett-pp"
 CAST_LIST_SUBJECT = "Cast list"
 LABEL_NAME = "ScheduleBotProcessed"
+BOT_VERSION = "2026-09-11-segment-time-fix-v2"
 
 
 # ============================================================
@@ -463,10 +464,45 @@ def short_day(day):
 def short_date(date):
     if not date:
         return ""
-    match = re.search(r"(\d{1,2})\.(\d{1,2})", date)
-    if not match:
-        return date
-    return f"{int(match.group(1)):02d}.{int(match.group(2)):02d}"
+
+    text = str(date).strip()
+
+    # Numeric formats such as 07.09.2026 or 7.9.26
+    match = re.search(r"(\d{1,2})\.(\d{1,2})", text)
+    if match:
+        return f"{int(match.group(1)):02d}.{int(match.group(2)):02d}"
+
+    # Claude may return dates as "07. September 2026".
+    month_numbers = {
+        "januar": 1,
+        "februar": 2,
+        "maerz": 3,
+        "märz": 3,
+        "april": 4,
+        "mai": 5,
+        "juni": 6,
+        "juli": 7,
+        "august": 8,
+        "september": 9,
+        "oktober": 10,
+        "november": 11,
+        "dezember": 12,
+    }
+
+    long_match = re.search(
+        r"(\d{1,2})\.?\s+([A-Za-zÄÖÜäöüß]+)\s+\d{2,4}",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if long_match:
+        day = int(long_match.group(1))
+        month_name = long_match.group(2).casefold()
+        month = month_numbers.get(month_name)
+        if month:
+            return f"{day:02d}.{month:02d}"
+
+    return text
 
 
 # ============================================================
@@ -1079,26 +1115,37 @@ def belongs_to_me(row, cast_info):
 # SAFE PERSONAL "BIS"
 # ============================================================
 
+def split_note_segments(field):
+    """Split a combined Claude field into individual note fragments.
+
+    Claude may join visually separate schedule notes with semicolons, pipes,
+    or line breaks.  Personal time markers are only valid when the dancer
+    name and the time marker occur in the SAME fragment.
+    """
+    field = str(field or "")
+    parts = re.split(r"[|;\n\r]+", field)
+    return [part.strip() for part in parts if part.strip()]
+
+
 def personal_bis_from_field(field):
-    field = field or ""
+    for segment in split_note_segments(field):
+        if not re.search(
+            r"Fernandez\s+G\.",
+            segment,
+            flags=re.IGNORECASE,
+        ):
+            continue
 
-    if not re.search(
-        r"Fernandez\s+G\.",
-        field,
-        flags=re.IGNORECASE,
-    ):
-        return None
+        match = re.search(
+            r"\bbis\s+(\d{1,2}:\d{2})",
+            segment,
+            flags=re.IGNORECASE,
+        )
 
-    match = re.search(
-        r"\bbis\s+(\d{1,2}:\d{2})",
-        field,
-        flags=re.IGNORECASE,
-    )
+        if match:
+            return match.group(1)
 
-    if not match:
-        return None
-
-    return match.group(1)
+    return None
 
 
 def personal_end_time(row):
@@ -1130,25 +1177,24 @@ def personal_end_note(row):
 # ============================================================
 
 def personal_ab_from_field(field):
-    field = field or ""
+    for segment in split_note_segments(field):
+        if not re.search(
+            r"Fernandez\s+G\.",
+            segment,
+            flags=re.IGNORECASE,
+        ):
+            continue
 
-    if not re.search(
-        r"Fernandez\s+G\.",
-        field,
-        flags=re.IGNORECASE,
-    ):
-        return None
+        match = re.search(
+            r"\bab\s+(\d{1,2}:\d{2})",
+            segment,
+            flags=re.IGNORECASE,
+        )
 
-    match = re.search(
-        r"\bab\s+(\d{1,2}:\d{2})",
-        field,
-        flags=re.IGNORECASE,
-    )
+        if match:
+            return match.group(1)
 
-    if not match:
-        return None
-
-    return match.group(1)
+    return None
 
 
 def personal_start_note(row, selected_rows_for_day):
@@ -1789,6 +1835,7 @@ def status():
     state = get_job_state()
 
     if request.args.get("json") == "1":
+        state["version"] = BOT_VERSION
         return jsonify(state)
 
     running = state.get("running", False)
@@ -1918,6 +1965,11 @@ def status():
             <p>
                 <strong>Job:</strong>
                 {html.escape(str(state.get("job_id") or "-"))}
+            </p>
+
+            <p>
+                <strong>Version:</strong>
+                {html.escape(BOT_VERSION)}
             </p>
 
             {schedule_html}
