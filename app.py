@@ -36,8 +36,24 @@ MY_NAME = "Fernandez G."
 SENDER_EMAIL = "ismenia.keck@wiener-staatsballett.at"
 SCHEDULE_FILENAME_HINT = "ballett-pp"
 CAST_LIST_SUBJECT = "Cast list"
+PHOTO_SCHEDULE_SUBJECT = "Schedule Photo"
 LABEL_NAME = "ScheduleBotProcessed"
-BOT_VERSION = "2026-09-11-segment-time-fix-v2"
+BOT_VERSION = "2026-09-11-photo-fallback-v1"
+
+SUPPORTED_PHOTO_MEDIA_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
+
+PHOTO_EXT_TO_MEDIA_TYPE = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 
 # ============================================================
@@ -52,6 +68,7 @@ JOB_STATE = {
     "stage": "idle",
     "message": "Noch kein Lauf gestartet.",
     "dry_run": None,
+    "source": None,
     "started_at": None,
     "finished_at": None,
     "schedule_file": None,
@@ -79,7 +96,7 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def reset_job_state(job_id, dry_run):
+def reset_job_state(job_id, dry_run, source):
     with JOB_LOCK:
         JOB_STATE.clear()
         JOB_STATE.update(
@@ -89,6 +106,7 @@ def reset_job_state(job_id, dry_run):
                 "stage": "starting",
                 "message": "Bot wurde gestartet.",
                 "dry_run": dry_run,
+                "source": source,
                 "started_at": utc_now(),
                 "finished_at": None,
                 "schedule_file": None,
@@ -170,6 +188,29 @@ SCHEDULE_TOOL = {
         "required": ["days"],
     },
 }
+
+PHOTO_SCHEDULE_TOOL = json.loads(json.dumps(SCHEDULE_TOOL))
+PHOTO_SCHEDULE_TOOL["name"] = "submit_photo_schedule"
+PHOTO_SCHEDULE_TOOL["description"] = (
+    "Report whether the photographed weekly schedule is fully readable and, "
+    "when it is, submit the complete extracted schedule."
+)
+PHOTO_SCHEDULE_TOOL["input_schema"]["properties"]["readable"] = {
+    "type": "boolean"
+}
+PHOTO_SCHEDULE_TOOL["input_schema"]["properties"]["reason"] = {
+    "type": "string",
+    "description": (
+        "If readable=false, briefly explain what is cropped, blurry, missing, "
+        "or otherwise unsafe to extract. Empty string when readable=true."
+    ),
+}
+PHOTO_SCHEDULE_TOOL["input_schema"]["required"] = [
+    "days",
+    "readable",
+    "reason",
+]
+
 
 CAST_TOOL = {
     "name": "submit_cast_roles",
@@ -319,6 +360,41 @@ no second/third red or italic note line was skipped
 nothing copied from neighboring columns
 
 Then call submit_schedule exactly once with the COMPLETE schedule.
+'''
+
+PHOTO_SCHEDULE_PROMPT = SCHEDULE_PROMPT.replace(
+    "Then call submit_schedule exactly once with the COMPLETE schedule.",
+    "",
+) + r'''
+
+PHOTO-SPECIFIC SAFETY RULES:
+
+You are receiving ordinary phone photos of the printed weekly schedule, not the
+original PDF. The photos may be tilted, have glare, shadows, perspective
+distortion, or small text.
+
+Before extracting, inspect ALL attached photos.
+
+Set readable=true ONLY when you can confidently read the complete photographed
+schedule well enough to extract every visible timed block without guessing.
+
+Set readable=false when any essential photographed area is too blurry, cropped,
+covered by glare, missing, or ambiguous. If the photos are incomplete enough
+that you cannot safely reconstruct the full weekly schedule, also set
+readable=false.
+
+When readable=false:
+- do NOT guess missing text
+- return days=[]
+- explain the problem briefly in reason
+
+When readable=true:
+- reason must be an empty string
+- extract the full schedule with exactly the same strict table rules above
+- pay special attention to tiny red/italic restriction lines such as personal
+  ab/bis times
+
+Then call submit_photo_schedule exactly once.
 '''
 
 CAST_PROMPT = f'''
@@ -658,6 +734,36 @@ def mark_as_processed(message_id):
     )
 
 
+def schedule_already_sent_recently():
+    """True when a schedule source was successfully sent in the last 2 days.
+
+    A successful Schedule Photo email and a successful official Ismenia PDF
+    receive the same hidden Gmail label. This survives Render restarts and
+    prevents later fallback checks from sending the same Friday schedule again.
+    """
+    from googleapiclient.discovery import build
+
+    creds = get_gmail_credentials()
+    if not creds:
+        return False
+
+    service = build("gmail", "v1", credentials=creds)
+    get_or_create_label(service)
+
+    result = (
+        service.users()
+        .messages()
+        .list(
+            userId="me",
+            q=f'label:{LABEL_NAME} newer_than:2d',
+            maxResults=1,
+        )
+        .execute()
+    )
+
+    return bool(result.get("messages"))
+
+
 # ============================================================
 # FIND WEEKLY SCHEDULE
 # ============================================================
@@ -745,6 +851,149 @@ def find_latest_schedule_pdf():
 
     print("❌ No new Ballett-PP schedule found", flush=True)
     return None, None, None
+
+
+# ============================================================
+# FIND USER'S SCHEDULE PHOTO EMAIL
+# ============================================================
+
+def _photo_media_type(filename, mime_type):
+    mime = (mime_type or "").lower().strip()
+    if mime in SUPPORTED_PHOTO_MEDIA_TYPES:
+        return mime
+
+    lower = (filename or "").lower()
+    for ext, media_type in PHOTO_EXT_TO_MEDIA_TYPE.items():
+        if lower.endswith(ext):
+            return media_type
+
+    return None
+
+
+def find_latest_schedule_photos():
+    """Find the newest self-sent 'Schedule Photo' email and download its images.
+
+    Returns (photos, message_id, display_name, note). The message is deliberately
+    not marked processed unless WhatsApp is actually sent.
+    """
+    from googleapiclient.discovery import build
+
+    creds = get_gmail_credentials()
+    if not creds:
+        return [], None, None, "Gmail ist nicht verbunden."
+
+    service = build("gmail", "v1", credentials=creds)
+    get_or_create_label(service)
+
+    query = (
+        f'from:me '
+        f'subject:"{PHOTO_SCHEDULE_SUBJECT}" '
+        f'newer_than:3d '
+        f'-label:{LABEL_NAME}'
+    )
+
+    result = (
+        service.users()
+        .messages()
+        .list(
+            userId="me",
+            q=query,
+            maxResults=20,
+        )
+        .execute()
+    )
+
+    refs = result.get("messages", [])
+    if not refs:
+        print("ℹ️ No Schedule Photo email found", flush=True)
+        return [], None, None, "Keine neue Schedule Photo E-Mail gefunden."
+
+    messages = []
+    for ref in refs:
+        msg = (
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=ref["id"],
+                format="full",
+            )
+            .execute()
+        )
+        messages.append(msg)
+
+    messages.sort(
+        key=lambda message: int(message.get("internalDate", "0")),
+        reverse=True,
+    )
+
+    newest = messages[0]
+    photos = []
+    unsupported = []
+    photo_index = 0
+
+    for part in walk_parts(newest["payload"]):
+        filename = part.get("filename", "") or ""
+        mime_type = part.get("mimeType", "") or ""
+        media_type = _photo_media_type(filename, mime_type)
+        body = part.get("body", {})
+
+        if not media_type:
+            lower = filename.lower()
+            if mime_type.lower().startswith("image/") or lower.endswith((".heic", ".heif")):
+                unsupported.append(filename or mime_type or "unbekanntes Bild")
+            continue
+
+        if body.get("attachmentId"):
+            attachment = (
+                service.users()
+                .messages()
+                .attachments()
+                .get(
+                    userId="me",
+                    messageId=newest["id"],
+                    id=body["attachmentId"],
+                )
+                .execute()
+            )
+            image_bytes = decode_gmail_data(attachment["data"])
+        elif body.get("data"):
+            image_bytes = decode_gmail_data(body["data"])
+        else:
+            continue
+
+        photo_index += 1
+        photos.append(
+            {
+                "filename": filename or f"schedule-photo-{photo_index}",
+                "media_type": media_type,
+                "bytes": image_bytes,
+            }
+        )
+
+    if photos:
+        display_name = (
+            f'{PHOTO_SCHEDULE_SUBJECT} – {len(photos)} Foto'
+            + ("s" if len(photos) != 1 else "")
+        )
+        print(
+            f"✅ Schedule Photo email found with {len(photos)} supported image(s)",
+            flush=True,
+        )
+        return photos, newest["id"], display_name, ""
+
+    if unsupported:
+        note = (
+            "Schedule Photo E-Mail gefunden, aber keine unterstützten Bilder. "
+            "Bitte JPG/JPEG, PNG oder WebP verwenden. Nicht unterstützt: "
+            + ", ".join(unsupported)
+        )
+        print("⚠️ " + note, flush=True)
+        return [], newest["id"], PHOTO_SCHEDULE_SUBJECT, note
+
+    note = "Schedule Photo E-Mail gefunden, aber keine Bild-Anhänge erkannt."
+    print("⚠️ " + note, flush=True)
+    return [], newest["id"], PHOTO_SCHEDULE_SUBJECT, note
 
 
 # ============================================================
@@ -897,6 +1146,71 @@ def read_schedule_with_claude(pdf_bytes):
             return data
 
     raise ValueError("Claude did not return structured schedule data")
+
+
+def read_schedule_photos_with_claude(photo_files):
+    if not photo_files:
+        return None, "Keine Fotos vorhanden."
+
+    client = anthropic.Anthropic(
+        api_key=os.environ["ANTHROPIC_API_KEY"]
+    )
+
+    content = []
+
+    for item in photo_files:
+        image_b64 = base64.standard_b64encode(item["bytes"]).decode("utf-8")
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": item["media_type"],
+                    "data": image_b64,
+                },
+            }
+        )
+
+    content.append(
+        {
+            "type": "text",
+            "text": PHOTO_SCHEDULE_PROMPT,
+        }
+    )
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=16000,
+        temperature=0,
+        tools=[PHOTO_SCHEDULE_TOOL],
+        tool_choice={
+            "type": "tool",
+            "name": "submit_photo_schedule",
+        },
+        messages=[
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+    )
+
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "submit_photo_schedule":
+            data = block.input
+            if not data.get("readable"):
+                reason = (
+                    data.get("reason")
+                    or "Die Fotos sind nicht sicher genug lesbar."
+                )
+                return None, reason
+
+            if not data.get("days"):
+                return None, "Fotos wurden gelesen, aber es wurde kein Wochenplan erkannt."
+
+            return data, ""
+
+    raise ValueError("Claude did not return structured photo schedule data")
 
 
 # ============================================================
@@ -1556,37 +1870,131 @@ def send_whatsapp(message):
 # BACKGROUND WEEKLY JOB
 # ============================================================
 
-def process_weekly_job(job_id, dry_run):
+def process_weekly_job(job_id, dry_run, source):
     try:
-        update_job(
-            job_id,
-            stage="finding_schedule",
-            message="Suche den neuen Wochenplan von Ismenia…",
+        source_label = (
+            "deine Schedule-Photos"
+            if source == "photo"
+            else "Ismenias offiziellen PDF-Wochenplan"
         )
 
-        (
-            schedule_pdf,
-            message_id,
-            schedule_filename,
-        ) = find_latest_schedule_pdf()
-
-        if not schedule_pdf:
+        # Persistent duplicate guard. Dry runs bypass it so the photo path can be tested.
+        if not dry_run and schedule_already_sent_recently():
             update_job(
                 job_id,
                 running=False,
-                stage="no_schedule",
-                message="Kein neuer unprocessed Wochenplan gefunden.",
+                stage="done",
+                message=(
+                    "Der Wochenplan wurde in den letzten 2 Tagen bereits per WhatsApp "
+                    "gesendet. Dieser Check macht deshalb nichts."
+                ),
                 finished_at=utc_now(),
             )
+            print("✅ Schedule already sent recently; skipping", flush=True)
             return
 
         update_job(
             job_id,
-            schedule_file=schedule_filename,
+            stage="finding_schedule",
+            message=f"Suche {source_label}…",
+        )
+
+        source_message_id = None
+        schedule_filename = None
+        schedule = None
+
+        if source == "photo":
+            (
+                photo_files,
+                source_message_id,
+                schedule_filename,
+                photo_note,
+            ) = find_latest_schedule_photos()
+
+            if not photo_files:
+                update_job(
+                    job_id,
+                    running=False,
+                    stage="no_schedule",
+                    message=(
+                        photo_note
+                        or "Keine neue Schedule Photo E-Mail gefunden. "
+                           "Der offizielle PDF-Check kann später übernehmen."
+                    ),
+                    schedule_file=schedule_filename,
+                    finished_at=utc_now(),
+                )
+                return
+
+            update_job(
+                job_id,
+                schedule_file=schedule_filename,
+                stage="reading_schedule",
+                message=(
+                    "Claude prüft deine Schedule-Fotos. Wenn etwas nicht sicher lesbar ist, "
+                    "wird nichts gesendet und der offizielle PDF-Check übernimmt später."
+                ),
+            )
+
+            schedule, unreadable_reason = read_schedule_photos_with_claude(
+                photo_files
+            )
+
+            if not schedule:
+                update_job(
+                    job_id,
+                    running=False,
+                    stage="no_schedule",
+                    message=(
+                        "Schedule-Fotos wurden gefunden, aber nicht sicher genug gelesen: "
+                        + unreadable_reason
+                        + " Der offizielle PDF-Check kann später übernehmen."
+                    ),
+                    finished_at=utc_now(),
+                )
+                print(
+                    "⚠️ Schedule photos rejected as unreadable:",
+                    unreadable_reason,
+                    flush=True,
+                )
+                return
+
+        else:
+            (
+                schedule_pdf,
+                source_message_id,
+                schedule_filename,
+            ) = find_latest_schedule_pdf()
+
+            if not schedule_pdf:
+                update_job(
+                    job_id,
+                    running=False,
+                    stage="no_schedule",
+                    message="Kein neuer offizieller Ballett-PP Wochenplan gefunden.",
+                    finished_at=utc_now(),
+                )
+                return
+
+            update_job(
+                job_id,
+                schedule_file=schedule_filename,
+                stage="reading_schedule",
+                message="Claude liest gerade Ismenias offiziellen PDF-Wochenplan…",
+            )
+
+            schedule = read_schedule_with_claude(
+                schedule_pdf
+            )
+
+        print(
+            f"✅ Schedule extracted from source={source}",
+            flush=True,
         )
 
         update_job(
             job_id,
+            schedule_file=schedule_filename,
             stage="finding_cast",
             message="Suche deine neueste Cast List E-Mail…",
         )
@@ -1600,26 +2008,7 @@ def process_weekly_job(job_id, dry_run):
 
         update_job(
             job_id,
-            cast_files=[
-                item["filename"]
-                for item in cast_pdfs
-            ],
-        )
-
-        update_job(
-            job_id,
-            stage="reading_schedule",
-            message="Claude liest gerade den Wochenplan. Das dauert am längsten…",
-        )
-
-        schedule = read_schedule_with_claude(
-            schedule_pdf
-        )
-
-        print("✅ Schedule extracted", flush=True)
-
-        update_job(
-            job_id,
+            cast_files=[item["filename"] for item in cast_pdfs],
             stage="reading_cast",
             message="Claude liest jetzt deine Cast Lists…",
         )
@@ -1641,63 +2030,59 @@ def process_weekly_job(job_id, dry_run):
             message="Python wählt jetzt nur deine Proben aus…",
         )
 
-        log_selected_rows(
-            schedule,
-            cast_info,
-        )
+        log_selected_rows(schedule, cast_info)
 
-        digest = build_digest(
-            schedule,
-            cast_info,
-        )
+        digest = build_digest(schedule, cast_info)
 
         if digest == "Keine passenden Proben gefunden.":
+            if source == "photo":
+                update_job(
+                    job_id,
+                    running=False,
+                    stage="no_schedule",
+                    message=(
+                        "Die Fotos ergaben keinen sicheren persönlichen Wochenplan. "
+                        "Es wurde nichts gesendet; der offizielle PDF-Check übernimmt später."
+                    ),
+                    finished_at=utc_now(),
+                )
+                return
+
             raise RuntimeError(
                 "Keine passenden Proben gefunden. Sicherheitsstopp."
             )
 
-        print(
-            "\n================ CURRENT ROLES ================\n",
-            flush=True,
-        )
+        print("\n================ CURRENT ROLES ================\n", flush=True)
+        print(json.dumps(cast_info, ensure_ascii=False, indent=2), flush=True)
+        print("\n================ WHATSAPP =====================\n", flush=True)
+        print(digest, flush=True)
+        print("\n================================================\n", flush=True)
 
-        print(
-            json.dumps(
-                cast_info,
-                ensure_ascii=False,
-                indent=2,
-            ),
-            flush=True,
-        )
-
-        print(
-            "\n================ WHATSAPP =====================\n",
-            flush=True,
-        )
-
-        print(
-            digest,
-            flush=True,
-        )
-
-        print(
-            "\n================================================\n",
-            flush=True,
-        )
-
-        update_job(
-            job_id,
-            digest=digest,
-        )
+        update_job(job_id, digest=digest)
 
         if dry_run:
             update_job(
                 job_id,
                 running=False,
                 stage="done",
-                message="Dry Run fertig. Nichts wurde gesendet.",
+                message=f"Dry Run ({source}) fertig. Nichts wurde gesendet oder markiert.",
                 finished_at=utc_now(),
             )
+            return
+
+        # A final duplicate check protects against two close cron invocations.
+        if schedule_already_sent_recently():
+            update_job(
+                job_id,
+                running=False,
+                stage="done",
+                message=(
+                    "Während dieses Laufs wurde der Wochenplan bereits von einem anderen "
+                    "Check gesendet. Keine zweite WhatsApp wurde verschickt."
+                ),
+                finished_at=utc_now(),
+            )
+            print("✅ Duplicate prevented before send", flush=True)
             return
 
         update_job(
@@ -1708,18 +2093,22 @@ def process_weekly_job(job_id, dry_run):
 
         send_whatsapp(digest)
 
-        mark_as_processed(message_id)
+        # Only a successful WhatsApp send marks the source as processed.
+        mark_as_processed(source_message_id)
 
         update_job(
             job_id,
             running=False,
             stage="done",
-            message="WhatsApp wurde gesendet und der Wochenplan als verarbeitet markiert.",
+            message=(
+                "WhatsApp wurde gesendet. Diese Woche ist jetzt als gesendet markiert; "
+                "spätere Foto-/PDF-Checks senden nicht noch einmal."
+            ),
             finished_at=utc_now(),
         )
 
         print(
-            "✅ WhatsApp sent and schedule marked processed",
+            f"✅ WhatsApp sent and source={source} marked processed",
             flush=True,
         )
 
@@ -1729,12 +2118,7 @@ def process_weekly_job(job_id, dry_run):
             repr(exc),
             flush=True,
         )
-
-        print(
-            traceback.format_exc(),
-            flush=True,
-        )
-
+        print(traceback.format_exc(), flush=True)
         update_job(
             job_id,
             running=False,
@@ -1761,6 +2145,10 @@ def run_weekly():
         return "unauthorized", 401
 
     dry_run = request.args.get("dry") == "1"
+    source = (request.args.get("source") or "official").strip().lower()
+
+    if source not in {"photo", "official"}:
+        return "source must be 'photo' or 'official'", 400
 
     with JOB_LOCK:
         if JOB_STATE.get("running"):
@@ -1777,11 +2165,12 @@ def run_weekly():
     reset_job_state(
         job_id,
         dry_run,
+        source,
     )
 
     worker = threading.Thread(
         target=process_weekly_job,
-        args=(job_id, dry_run),
+        args=(job_id, dry_run, source),
         daemon=True,
     )
 
@@ -1847,6 +2236,7 @@ def status():
     digest = state.get("digest") or ""
     error = state.get("error") or ""
     dry_run = state.get("dry_run")
+    source = state.get("source") or "official"
 
     refresh_tag = (
         "<meta http-equiv='refresh' content='5'>"
@@ -1913,6 +2303,12 @@ def status():
         else "Echter WhatsApp-Lauf"
     )
 
+    source_text = (
+        "Deine Schedule Photo E-Mail"
+        if source == "photo"
+        else "Ismenias offizieller Ballett-PP PDF"
+    )
+
     schedule_html = ""
 
     if schedule_file:
@@ -1960,6 +2356,11 @@ def status():
             <p>
                 <strong>Modus:</strong>
                 {html.escape(mode_text)}
+            </p>
+
+            <p>
+                <strong>Quelle:</strong>
+                {html.escape(source_text)}
             </p>
 
             <p>
