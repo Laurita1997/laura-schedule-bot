@@ -38,7 +38,7 @@ SCHEDULE_FILENAME_HINT = "ballett-pp"
 CAST_LIST_SUBJECT = "Cast list"
 PHOTO_SCHEDULE_SUBJECT = "Schedule Photo"
 LABEL_NAME = "ScheduleBotProcessed"
-BOT_VERSION = "2026-09-11-photo-fallback-v1"
+BOT_VERSION = "2026-09-13-cron-small-response-v1"
 
 SUPPORTED_PHOTO_MEDIA_TYPES = {
     "image/jpeg",
@@ -2137,12 +2137,24 @@ def process_weekly_job(job_id, dry_run, source):
     "/run-weekly",
     methods=["GET", "POST"],
 )
+@app.route(
+    "/cron-weekly",
+    methods=["GET", "POST"],
+)
 def run_weekly():
     supplied_secret = request.args.get("secret")
     real_secret = os.environ.get("CRON_SECRET")
 
     if not real_secret or supplied_secret != real_secret:
         return "unauthorized", 401
+
+    # /run-weekly stays the human-friendly/manual endpoint.
+    # /cron-weekly (or ?cron=1) is deliberately tiny: cron-job.org only
+    # needs to trigger the background job, not download the status page.
+    cron_mode = (
+        request.path == "/cron-weekly"
+        or request.args.get("cron") == "1"
+    )
 
     dry_run = request.args.get("dry") == "1"
     source = (request.args.get("source") or "official").strip().lower()
@@ -2152,6 +2164,13 @@ def run_weekly():
 
     with JOB_LOCK:
         if JOB_STATE.get("running"):
+            if cron_mode:
+                return (
+                    "OK busy\n",
+                    200,
+                    {"Content-Type": "text/plain; charset=utf-8"},
+                )
+
             return (
                 "<h2>Bot läuft bereits ⏳</h2>"
                 "<p>Öffne die Status-Seite.</p>"
@@ -2175,6 +2194,17 @@ def run_weekly():
     )
 
     worker.start()
+
+    if cron_mode:
+        print(
+            f"✅ Cron trigger accepted: job={job_id} source={source} dry={dry_run}",
+            flush=True,
+        )
+        return (
+            f"OK started {job_id}\n",
+            200,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
 
     status_url = (
         f"/status?"
